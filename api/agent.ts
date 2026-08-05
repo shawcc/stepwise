@@ -1,4 +1,4 @@
-import { runAgent } from "./_agent-core";
+import { runAgent } from "./_agent-core.js";
 
 type RequestLike = {
   method?: string;
