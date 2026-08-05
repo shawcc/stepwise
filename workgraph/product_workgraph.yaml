@@ -1,11 +1,11 @@
 workgraph:
-  id: wg-workgraph-product-v0.1
+  id: wg-workgraph-product-v0.2
   name: WorkGraph 产品可推理工作图谱
-  version: v0.1
+  version: v0.2
   status: draft
   created_at: 2026-06-19
   principle:
-    primary_artifact: reasonable_work_graph
+    primary_artifact: reasoning_work_graph
     derived_artifacts:
       - docs/MRD.md
       - docs/PRD.md
@@ -13,13 +13,13 @@ workgraph:
       - docs/InteractionDesign.md
       - workgraph/wireframe_design.yaml
       - docs/Wireframes.md
-    statement: "产品主产物不是文档，而是可推理工作图谱；文档只是图谱的阅读视图、导出快照或汇报格式。"
+    statement: "工作图谱是工作唯一事实源；文档、对话、列表和看板都是图谱的派生视图。"
 
 nodes:
   - id: intent-001
     type: raw_intent
-    title: 构建人和 Agent 共同协作的新办公模式
-    content: "从目标出发，按逻辑拆解成充分条件和任务，由 Agent 执行并回填证据，形成可推理、可执行、可验收的办公系统。"
+    title: 构建 Agent 原生的组织工作系统
+    content: "面向 Agent 数量可能远多于人的未来组织，以工作图谱承载共享事实、推理、行动和证据，让 Agent 委派、互审和执行，让人类聚焦目标、规则和高风险决策。"
     source: conversation
     confidence: high
 
@@ -53,10 +53,22 @@ nodes:
     content: "OKR 主要表达 Objective 和 Key Results；WorkGraph 进一步表达目标解释、假设、约束、推理记录、来源追溯、证据验收和异常回流。"
     confidence: high
 
+  - id: thesis-006
+    type: product_thesis
+    title: 工作图谱是唯一事实源
+    content: "Goal、Claim、Evidence、Inference、Decision、Action、Outcome 和 Policy 共同构成工作事实；文档是线性阅读视图，对话是查询和提出图谱变更的交互方式。"
+    confidence: high
+
+  - id: thesis-007
+    type: product_thesis
+    title: 人类介入由风险而不是流程层级决定
+    content: "低风险、可逆、权限内且证据充分的工作由 Agent 自动推进；中风险或有分歧的工作进入 Agent 互审；高影响、不可逆或越权事项进入人类决策待办。"
+    confidence: high
+
   - id: product-001
     type: product_definition
     title: WorkGraph
-    content: "以目标为根的人-Agent 协作办公系统，将管理者战略意图转化为目标、小目标、任务、证据、验收和反馈构成的可推理工作图谱。"
+    content: "面向 Agent 原生组织的工作系统，将真实工作材料转化为带来源的候选对象与关系，再由人和 Agent 共同确认、拆解、执行、互审和验收。"
     confidence: high
 
   - id: market-001
@@ -91,14 +103,14 @@ nodes:
 
   - id: layer-001
     type: product_layer
-    title: 目标决策层
-    content: "负责意图理解、目标澄清、假设约束、小目标拆解和人类确认。"
+    title: 工作事实层
+    content: "保存 Goal、Claim、Evidence、Inference、Decision、Action、Outcome、Policy 及其来源、权限和版本关系。"
     confidence: high
 
   - id: layer-002
     type: product_layer
-    title: 任务执行层
-    content: "负责任务生成、Agent 调度、执行推进、证据回填、验收判断和异常回流。"
+    title: 运行治理层
+    content: "负责 Agent 委派、互审、风险分级、自动推进、人类决策、证据验收和异常回流。"
     confidence: high
 
   - id: internal-001
@@ -110,7 +122,7 @@ nodes:
   - id: internal-002
     type: internal_mechanism
     title: 显性推理
-    content: "沉淀目标、假设、约束、充分条件、小目标和决策理由。"
+    content: "沉淀目标、假设、约束、必要条件、联合充分假设、小目标和决策理由。"
     confidence: high
 
   - id: internal-003
@@ -120,21 +132,21 @@ nodes:
     confidence: high
 
   - id: gate-001
-    type: approval_gate
-    title: 目标确认门
-    content: "CEO 确认系统对战略意图的理解，未确认目标不能进入正式执行。"
+    type: risk_gate
+    title: 自动推进
+    content: "低风险、可逆、权限内且证据充分，由 Agent 自动推进并记录审计信息。"
     confidence: high
 
   - id: gate-002
-    type: approval_gate
-    title: 小目标确认门
-    content: "CEO 或目标负责人确认小目标拆解路径是否符合战略意图。"
+    type: risk_gate
+    title: Agent 互审
+    content: "中风险、证据不足或存在分歧，由独立 Agent 审查、补证、反驳或重新推理。"
     confidence: high
 
   - id: gate-003
-    type: approval_gate
-    title: 重大偏差确认门
-    content: "执行中出现目标不可达、假设被推翻、资源不足或合规风险时，回流目标决策层。"
+    type: risk_gate
+    title: 人类决策
+    content: "高影响、不可逆、越权或涉及价值取舍的事项进入有权限的人类决策待办。"
     confidence: high
 
   - id: object-001
@@ -230,7 +242,7 @@ nodes:
   - id: object-013
     type: graph_node_type
     title: 目标节点
-    content: "产品唯一核心工作对象。Goal、SubGoal、WorkUnit 本质上都是 Goal Node，只是所处层级、负责人和上下游视角不同；它包含目标解释、目标值、假设、约束、成功标准、推理记录、行动、证据和 review。"
+    content: "统一的目标容器。Goal、SubGoal、WorkUnit 在目标层级上本质相同；但 Goal Node 不是唯一节点类型，Claim、Evidence、Inference、Decision、Action、Outcome 和 Policy 保留独立语义。"
     confidence: high
 
   - id: object-014
@@ -301,14 +313,14 @@ nodes:
 
   - id: flow-001
     type: workflow
-    title: 战略目标落地主流程
-    content: "CEO 输入战略意图 -> 人和 Agent 共同理解目标 -> 充分讨论假设、约束和不清楚的地方 -> 负责人确认目标 -> 拆解为下一层目标或行动计划 -> 下一层继续按同一逻辑理解、确认、拆解和执行 -> 回填证据 -> Review 执行结果、依赖和假设 -> 成功继续推进，失败向上回流重新讨论和安排。"
+    title: 真实材料到可执行图谱主流程
+    content: "导入真实材料 -> 提取带来源的候选对象与关系 -> 人或授权 Agent 确认和修正 -> Agent 拆解、委派与互审 -> 风险分级 -> 自动执行或人类决策 -> 证据验收 -> Review 与影响传播。"
     confidence: high
 
   - id: flow-002
     type: workflow
     title: 单个工作单元流程
-    content: "接收上游来源 -> 理解当前目标 -> 补齐问题、假设和约束 -> 形成阶段结论 -> 拆解为下游工作 -> 执行或交给下游执行 -> 收集证据与状态 -> Review 是否达成目标 -> 必要时反馈上游重新推理。"
+    content: "读取上游目标、规则和证据 -> 形成候选理解 -> 标记不确定性 -> 生成下游 Goal 或 Action -> Agent 互审 -> 自动执行、继续委派或升级给人 -> 回填 Outcome 与 Evidence -> 必要时反馈上游。"
     confidence: high
 
   - id: flow-003
@@ -319,8 +331,8 @@ nodes:
 
   - id: requirement-001
     type: product_requirement
-    title: 目标创建
-    content: "支持自然语言输入目标，上传背景材料，抽取市场、指标、目标值、时间周期、业务范围、约束和负责人。"
+    title: 工作材料转图谱
+    content: "支持从真实材料提取 Goal、Claim、Evidence、Inference、Decision、Action、Outcome 和 Policy 候选对象；每项保留来源、置信度、明确表达或系统推断状态，并支持确认、修正和驳回。"
     confidence: high
 
   - id: requirement-002
@@ -344,7 +356,13 @@ nodes:
   - id: requirement-005
     type: product_requirement
     title: Agent 调度与执行
-    content: "将任务分配给 Agent 或人类角色，支持工具调用、状态更新、执行日志和人工介入请求。"
+    content: "支持 Agent 按能力、权限和工具承接、委派、拒绝和互审工作；输出必须回写图谱。"
+    confidence: high
+
+  - id: requirement-005a
+    type: product_requirement
+    title: 风险分级与自动推进
+    content: "根据风险、可逆性、权限、成本、证据充分度和 Agent 分歧，将工作分为自动推进、Agent 互审和人类决策。"
     confidence: high
 
   - id: requirement-006

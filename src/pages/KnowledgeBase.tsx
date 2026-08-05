@@ -2,9 +2,9 @@ import { BookOpen, LockKeyhole, Search } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 
 const knowledgeItems = [
-  { title: "访谈记录：未来办公痛点", scope: "我可见", type: "用户反馈", summary: "任务系统丢上下文，文档不可执行，复盘难以回到推理过程。" },
-  { title: "旧办公流程与竞品截图", scope: "团队可见", type: "背景材料", summary: "用于支撑工作图谱作为主界面的产品假设。" },
-  { title: "上级经营目标原文", scope: "无权限", type: "上游上下文", summary: "当前账号不可见，仅保留权限边界提示。" },
+  { title: "工信部揭榜挂帅通知", scope: "公开", type: "原始材料", summary: "候选 Goal、Policy、Action 和 Inference 的来源材料。" },
+  { title: "候选图谱 v0.2", scope: "团队可见", type: "图谱快照", summary: "包含已确认对象、系统推断、驳回记录和风险治理建议。" },
+  { title: "受限申报材料", scope: "无权限", type: "Evidence", summary: "当前账号不可见，仅展示权限边界，不生成内容摘要。" },
 ];
 
 export default function KnowledgeBase() {
@@ -16,25 +16,30 @@ export default function KnowledgeBase() {
         title="知识库"
       />
 
-      <div className="mb-5 flex items-center gap-3 rounded-[28px] border border-slate-950/10 bg-white/75 px-5 py-4">
-        <Search className="h-5 w-5 text-slate-500" />
-        <span className="text-sm font-bold text-slate-500">搜索我有权限访问的目标、材料、证据和复盘记录</span>
+      <div className="mb-3 flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3">
+        <Search className="h-4 w-4 text-slate-400" />
+        <span className="text-sm text-slate-500">搜索权限内的材料、证据、图谱快照和复盘记录</span>
       </div>
 
-      <section className="grid gap-4 lg:grid-cols-3">
+      <section className="overflow-hidden rounded-lg border border-slate-200 bg-white">
         {knowledgeItems.map((item) => {
           const locked = item.scope === "无权限";
           return (
-            <article className={`rounded-[32px] border p-5 ${locked ? "border-dashed border-slate-400/70 bg-slate-200/70" : "border-slate-950/10 bg-white/75"}`} key={item.title}>
-              <div className="flex items-center justify-between gap-3">
-                <span className="inline-flex items-center gap-2 rounded-full bg-slate-950 px-3 py-1.5 text-xs font-bold text-white">
+            <article
+              className={`grid gap-3 border-b px-4 py-3 last:border-b-0 lg:grid-cols-[180px_1fr_1.3fr] ${
+                locked ? "border-dashed border-slate-300 bg-slate-100" : "border-slate-100"
+              }`}
+              key={item.title}
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-flex items-center gap-2 rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700">
                   {locked ? <LockKeyhole className="h-3.5 w-3.5" /> : <BookOpen className="h-3.5 w-3.5" />}
                   {item.scope}
                 </span>
-                <span className="text-xs font-bold text-slate-500">{item.type}</span>
+                <span className="text-[11px] text-slate-500">{item.type}</span>
               </div>
-              <h2 className="mt-5 text-xl font-black text-slate-950">{item.title}</h2>
-              <p className="mt-3 text-sm leading-6 text-slate-600">{item.summary}</p>
+              <h2 className="text-sm font-semibold text-slate-950">{item.title}</h2>
+              <p className="text-xs leading-5 text-slate-600">{item.summary}</p>
             </article>
           );
         })}

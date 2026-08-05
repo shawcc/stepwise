@@ -1,4 +1,4 @@
-# PRD：目标驱动的人-Agent 协作办公系统
+# PRD：Agent 原生的可推理工作图谱系统
 
 > 说明：本文档是 `workgraph/product_workgraph.yaml` 的产品需求阅读视图，不是项目的主事实源。项目的一等产物是可推理工作图谱。
 
@@ -6,28 +6,29 @@
 
 - 产品代号：WorkGraph
 - 文档类型：Product Requirements Document
-- 版本：v0.1
-- 日期：2026-06-19
+- 版本：v0.2
+- 日期：2026-08-04
 - 状态：草案
 
 ## 2. 产品概述
 
-WorkGraph 是一套以目标为根的人-Agent 协作办公系统。它将管理者的自然语言战略意图转化为可确认的目标对象，再拆解为小目标、任务、执行状态、证据和验收结果，最终形成从决策到执行的闭环。产品不以文档作为核心产物，而以可推理工作图谱作为组织工作的第一性载体。
+WorkGraph 是一套面向 Agent 原生组织的工作系统。它将自然语言、聊天、文档和系统数据转化为带来源的候选命题与关系，再形成可推理、可执行、可验证的工作图谱。多个 Agent 围绕同一张图谱委派、执行、互审和回填证据；人类负责目标设定、规则治理、价值判断以及高风险或不可逆决策。
 
-WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据推理产生，而不是孤立拍脑袋决定。每个工作单元都必须能说明它理解了什么目标、基于哪些假设和约束、如何拆解出行动、执行结果如何证明、失败时如何反馈回上游。
+WorkGraph 的底层假设是：在 Agent 数量可能远多于人的未来组织中，文档和聊天不足以作为 Agent 协作的工作事实源。任何工作都必须能说明它服务什么目标、基于哪些事实与假设、经过什么推理、受什么规则约束、由谁执行、用什么证据验收，以及失败时影响哪些上游和下游。
 
 因此，系统不是简单管理任务，而是维护一条完整不断裂的目标推理链路：
 
 ```text
-理解目标 -> 确认目标 -> 识别假设和约束 -> 目标拆解 -> 行动计划 -> 执行证据 -> Review 反馈
+材料与意图 -> 候选命题与关系 -> 确认工作图谱 -> Agent 拆解与互审
+-> 风险分级 -> 自动执行或人类决策 -> 证据验收 -> Review 与影响传播
 ```
 
-企业中不同角色的差异不在于工作模型不同，而在于负责的层级不同。高层处理更抽象、更上游的目标和决策；中层处理跨团队拆解、依赖和资源；执行者和 Agent 处理更细粒度的任务、证据和局部反馈。所有层级必须共享同一套推理链路。
+企业中不同角色的差异不在于工作模型不同，而在于负责的图谱范围、决策权限和风险额度不同。人和 Agent 共享同一套工作事实，但获得不同视图和操作权限。
 
 产品一级结构采用两层：
 
-- 目标决策层：负责意图理解、目标澄清、小目标拆解和人类确认。
-- 任务执行层：负责任务生成、Agent 调度、执行推进、证据回填、验收判断和异常回流。
+- 工作事实层：保存目标、命题、证据、推理、决策、行动、结果、规则及其版本关系。
+- 运行治理层：负责 Agent 编排、风险分级、自动推进、人类决策、验收和异常回流。
 
 产品对用户暴露的一级信息结构采用四个主入口：
 
@@ -40,9 +41,9 @@ WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据
 
 系统内部保留三种推理状态：
 
-- 隐性推理：承载自然语言、直觉、类比、偏好和模糊判断。
-- 显性推理：沉淀目标、假设、约束、充分条件和小目标。
-- 可执行推理：生成任务、依赖、状态、工具调用、证据和验收。
+- 原始表达：自然语言、聊天、文档、会议和系统数据，仅作为输入与证据来源。
+- 候选结构：系统提取的命题、类型和关系，必须标记来源、置信度和“明确表达 / 系统推断”。
+- 已确认工作图谱：经过人或授权 Agent 确认，可被其他 Agent 读取、执行和审计的正式工作状态。
 
 ## 3. 产品目标
 
@@ -51,6 +52,8 @@ WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据
 - CEO 能用自然语言提出战略目标，并快速获得结构化目标理解稿。
 - 管理者能确认目标和拆解路径，而不是亲自维护所有任务细节。
 - Agent 能围绕同一个目标模型协作，而不是各自生成孤立建议。
+- Agent 能根据能力、权限和工具承接、委派和互审工作。
+- 人类只处理需要价值判断、越权授权或高影响承诺的事项。
 - 执行团队能看到每个任务为什么存在，以及如何证明完成。
 - 组织能追踪目标从提出、确认、拆解、执行到验收的全过程。
 - 用户能从自己的权限范围内看到完整工作图谱，并理解哪些上游信息因权限不可见。
@@ -59,7 +62,8 @@ WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据
 ### 3.2 产品目标
 
 - 将战略目标转化为结构化、可确认、可执行的工作图。
-- 通过确认门建立人类授权边界。
+- 将真实工作材料转化为带来源、置信度和待确认状态的候选图谱。
+- 通过风险分级决定 Agent 自动推进、Agent 互审或人类决策。
 - 通过证据链提高 Agent 执行可信度。
 - 通过异常回流让执行结果反向修正目标和假设。
 - 让每个工作单元都能向上追溯来源目标、推理依据、假设和约束。
@@ -74,12 +78,14 @@ WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据
 - v0.1 不承诺自动替代高管决策。
 - v0.1 不追求全行业通用模板，优先验证战略目标落地场景。
 - v0.1 不把方案文档、会议纪要或复盘文档作为核心工作产物，文档仅作为图谱导出和阅读视图。
+- v0.1 不宣称仅靠连接词或正则即可可靠理解自然语言逻辑。
+- v0.1 不做大量真实 Agent 的生产级调度，只用有限 Agent 验证委派、互审和风险升级链路。
 
 ## 4. 核心概念
 
 ### 4.1 目标节点 Goal Node
 
-目标节点是产品里唯一的核心工作对象。`Goal`、`SubGoal`、`Work Unit` 本质上都是同一种对象，只是处在不同层级、不同视角、不同责任人手里。
+目标节点是工作的目标容器。`Goal`、`SubGoal`、`Work Unit` 在目标层级上本质相同，只是处在不同层级、不同视角、不同责任主体手里。
 
 ```text
 上级视角：这是一个 SubGoal / 下游工作
@@ -87,7 +93,7 @@ WorkGraph 的底层假设是：任何人和任何 Agent 的工作都应该根据
 系统抽象：它始终是一个 Goal Node
 ```
 
-因此，系统不应把 Goal、SubGoal、WorkUnit 设计成三套对象，而应统一为 `Goal Node`。每个 Goal Node 都包含目标解释、目标值、假设、约束、成功标准、负责人、来源链路、推理记录、执行动作、证据和 review。
+因此，系统不应把 Goal、SubGoal、WorkUnit 设计成三套目标对象，而应统一为 `Goal Node`。但 Goal Node 不是工作图谱中唯一的节点类型。事实、假设、证据、推理、决策、行动、结果和规则有不同语义，必须保留不同类型，不能全部伪装成 Goal Node。
 
 Goal Node 可以递归拆解：
 
@@ -99,6 +105,23 @@ Goal Node
 ```
 
 它的关键含义是：任何一个工作节点都是目标化的，而不是孤立任务。
+
+### 4.1.1 工作图谱对象模型
+
+工作图谱是唯一事实源，由以下语义对象共同构成：
+
+| 对象 | 含义 | 关键要求 |
+|---|---|---|
+| Goal | 希望达成的状态 | 包含目标值、责任主体、成功标准和来源 |
+| Claim | 事实、假设或判断命题 | 区分事实 / 假设 / 推断，保留原文来源 |
+| Evidence | 支持或反驳命题的证据 | 包含来源、时间、权限和可信度 |
+| Inference | 从输入命题到输出命题的推理 | 关系有明确类型，记录输入 `x`、过程 `f(x)`、输出 `y` |
+| Decision | 带责任和权限的承诺 | 包含决策者、选项、依据、影响范围和有效期 |
+| Action | 可执行动作 | 包含执行者、依赖、工具、风险和验收标准 |
+| Outcome | 行动结果 | 区分动作完成与目标达成，连接实际证据 |
+| Policy | 权限、约束和自动化规则 | 决定 Agent 能做什么、何时需要升级 |
+
+列表、看板、文档、对话和决策待办都只是这些对象的视图，不建立独立事实源。
 
 ### 4.2 目标值 Target
 
@@ -161,18 +184,31 @@ Task 不应被理解为产品的核心对象。很多时候，上级视角里的
 
 证明任务完成或目标推进的材料，可以是数据、文件、系统日志、链接、用户确认、实验结果等。
 
-### 4.10 确认门 Approval Gate
+### 4.10 风险分级与决策门 Risk Gate
 
-需要人类负责人明确确认的关键节点，包括目标确认、小目标确认和重大偏差确认。
+系统根据风险、可逆性、权限、成本、证据充分度和 Agent 分歧程度决定工作如何推进：
 
-### 4.11 可推理工作图谱 Reasonable Work Graph
+- `auto`：低风险、可逆、权限内且证据充分，由 Agent 自动推进。
+- `peer_review`：中风险、证据不足或存在分歧，交给其他 Agent 互审、补证或重新推理。
+- `human_decision`：高影响、不可逆、越权或涉及价值取舍，进入人类决策待办。
+
+目标确认、小目标确认和重大偏差处理是可能触发的决策门，不是所有节点固定经过的人工审批步骤。
+
+### 4.11 可推理工作图谱 Reasoning Work Graph
 
 系统中的第一性工作产物，由节点和关系构成：
 
-- 节点：原始意图、目标、假设、约束、小目标、任务、证据、验收、异常、决策记录、review 记录。
-- 关系：支撑、依赖、因果、版本、确认、阻塞、证据证明、异常影响、拆解来源、反馈回流。
+- 节点：Goal、Claim、Evidence、Inference、Decision、Action、Outcome、Policy。
+- 关系：支撑、反驳、因果、条件、目的、顺序、依赖、约束、证明、拆解、委派、确认、阻塞、影响、修订、反馈回流。
 
 文档不是一等对象。方案、纪要、周报、复盘报告只能从图谱中生成，作为人类阅读视图、对外汇报快照或归档格式。
+
+图谱必须同时支持整体和局部：
+
+- 收起节点时，向上聚合目标状态、进度、风险、阻塞、待决策和活跃 Agent。
+- 展开节点时，按层级逐步展示子目标、推理、行动、证据和结果。
+- 用户可随时向上回到整体，也可沿任意关系向下追溯细节。
+- 无权限内容只显示边界及不泄密的聚合状态。
 
 ### 4.11.1 工作单元 Work Unit
 
@@ -216,6 +252,38 @@ f(x) -> y
 - `y`：阶段性推理产物，包括目标草案、拆解方案、任务选择、资源配置或偏差处理方案。
 
 系统需要记录每次关键推理的 `f(x)` 过程。复盘时，组织不只判断结果好坏，还要判断输入信息是否充分、前提是否成立、推理步骤是否跳跃、结论是否被证据验证。长期积累后，企业的推理过程可以持续校准。
+
+推理关系不能只用通用箭头表达，至少区分：
+
+- `supports`：A 支持 B。
+- `refutes`：A 反驳 B。
+- `causes`：A 导致 B。
+- `requires`：B 成立需要 A。
+- `constrains`：A 限制 B。
+- `depends_on`：A 依赖 B。
+- `decomposes_to`：A 拆解为 B。
+- `precedes`：A 在 B 之前发生。
+
+“虽然”“但是”“然后”等语言连接词只能作为关系识别线索，不能直接等同于逻辑关系。
+
+### 4.12.1 工作材料结构化
+
+系统从自然语言、聊天、文档、会议记录和系统数据中生成候选图谱。每个候选命题或关系必须包含：
+
+```yaml
+proposition: string
+source_text: string
+source_location: string
+object_type: goal | claim | evidence | inference | decision | action | outcome | policy
+claim_type: fact | assumption | inference | null
+relation_type: string | null
+modality: required | forbidden | encouraged | suggested | neutral
+extraction_mode: explicit | inferred
+confidence: low | medium | high
+confirmation_status: candidate | confirmed | rejected | revised
+```
+
+系统不得把连接词匹配结果直接写入正式图谱；低置信度、隐含关系和涉及否定、数量、权限的内容必须进入确认或互审。
 
 ### 4.13 与 OKR 的关系
 
@@ -309,45 +377,43 @@ Review 不是事后写复盘文档，而是图谱中的正式工作单元，会�
 ### 6.1 主流程
 
 ```text
-CEO 输入战略意图
--> 人和 Agent 共同理解目标
--> 充分讨论假设、约束、不清楚的地方和成功标准
--> 形成目标理解稿和阶段结论
--> 负责人确认目标
--> 拆解为下一层目标或行动计划
--> 下一层继续按同一套逻辑理解、确认、拆解和执行
--> 执行并回填证据
--> Review 执行结果、依赖和假设
--> 成功则继续向下推进，失败则向上回流重新讨论和安排
+导入真实工作材料或输入目标
+-> 提取带来源的候选命题、规则和关系
+-> 人或授权 Agent 确认、修正或驳回候选结构
+-> 形成正式工作图谱版本
+-> 多个 Agent 基于能力、权限和工具拆解、委派与互审
+-> 系统评估风险、可逆性、证据充分度和权限
+-> 低风险自动执行 / 中风险 Agent 互审 / 高风险人类决策
+-> 执行结果与证据回写图谱
+-> 按成功标准验收
+-> 异常、证据冲突或前提失效触发 Review 和影响传播
 ```
 
 ### 6.2 决策层流程
 
 ```text
-意图输入
--> 目标澄清
--> 假设识别
--> 约束识别
--> 多方推理讨论
--> 成功标准定义
--> 目标理解稿生成
--> 人类确认
--> 小目标拆解
--> 小目标确认
+待治理事项产生
+-> 展示来源、证据、冲突和影响范围
+-> 系统提供选项及 Agent 建议
+-> 判断是否可由 Agent 互审解决
+-> 无法自动解决时提交有权限的人
+-> 人选择、修改、延后或转交
+-> 决策生成正式 Decision 节点
+-> 更新受影响图谱并触发后续执行
 ```
 
 ### 6.3 执行层流程
 
 ```text
-小目标输入
--> 任务生成
--> 依赖分析
--> 责任分配
--> 执行调度
--> 状态更新
--> 证据回填
--> 验收判断
--> 异常回流
+已确认 Goal / Action
+-> 能力、工具与权限匹配
+-> Agent 承接或委派
+-> 执行前风险分级
+-> 执行与状态回写
+-> 证据采集
+-> Agent 互审或人类验收
+-> Outcome 写回
+-> 自动继续或异常回流
 ```
 
 ### 6.4 单个工作单元流程
@@ -355,15 +421,15 @@ CEO 输入战略意图
 任何层级的工作单元都必须复用同一套流程：
 
 ```text
-接收上游来源
--> 理解当前目标
--> 补齐问题、假设和约束
--> 形成阶段结论
--> 拆解为下游工作
--> 执行或交给下游执行
--> 收集证据与状态
--> Review 是否达成目标
--> 必要时反馈上游重新推理
+读取上游目标、规则和证据
+-> 形成候选理解与推理
+-> 补齐缺失信息或标记不确定性
+-> 生成下游 Goal / Action
+-> 互审支撑逻辑和风险
+-> 自动执行、继续委派或升级给人
+-> 回填 Outcome 与 Evidence
+-> Review 是否支持上游目标
+-> 必要时使下游失效并反馈上游
 ```
 
 ### 6.5 Review 回流流程
@@ -378,6 +444,21 @@ CEO 输入战略意图
 ```
 
 Review 回流必须保留原始链路和新链路，避免执行问题被局部消化而无法影响上游决策。
+
+### 6.6 风险分级流程
+
+```text
+候选行动或决策
+-> 检查权限
+-> 判断影响范围和可逆性
+-> 检查证据充分度与 Agent 分歧
+-> 计算治理等级
+   -> auto：自动执行并记录
+   -> peer_review：其他 Agent 审查、补证或反驳
+   -> human_decision：进入人的决策待办
+```
+
+风险分级必须可解释，用户可以查看触发升级的具体规则。
 
 ## 7. 信息架构
 
@@ -439,6 +520,36 @@ Review 回流必须保留原始链路和新链路，避免执行问题被局部�
 - 从知识条目跳转回相关图谱节点。
 
 ## 8. 功能需求
+
+### 8.0 工作材料转图谱
+
+用户故事：
+
+作为目标负责人，我希望把聊天、文档、会议记录或一段自然语言交给系统，获得可检查的候选工作图谱，而不是自己重新整理目标、规则和行动。
+
+功能要求：
+
+- 支持粘贴文本；文件、聊天和会议接入在 MVP 中可以使用预置材料模拟。
+- 提取 Goal、Claim、Evidence、Inference、Decision、Action、Outcome、Policy 候选对象。
+- 每个对象保留原文片段和来源位置。
+- 识别事实、假设、推断、必须、禁止、鼓励、数量上限、期限和责任主体。
+- 每条关系标记关系类型、显式 / 隐式、置信度和确认状态。
+- 支持逐条确认、修正、驳回和合并。
+- 原文与候选图谱双向定位。
+- 低置信度、否定、数量、权限相关内容默认不得自动进入正式图谱。
+
+异常与空状态：
+
+- 无法识别结构时保留原文，并提示“未生成可确认关系”，不得伪造逻辑。
+- 同一句存在多种解释时并列展示候选，不自动选择唯一结论。
+- 来源无权限或失效时只保留可审计的来源标识，正文不可见。
+
+验收标准：
+
+- 输入包含目标、资格、期限和数量限制的真实材料后，系统能生成不同类型的候选对象。
+- 任意候选对象均可定位到原文。
+- 未确认候选与正式图谱在视觉和状态上明确区分。
+- 用户修正候选后，系统保存修订前后差异。
 
 ### 8.1 目标创建
 
@@ -530,7 +641,8 @@ goal:
 
 验收标准：
 
-- 未确认目标不能进入任务执行层。
+- 高风险、不可逆或越权目标未确认时不能进入任务执行层。
+- 满足自动推进策略的低风险目标可由授权 Agent 确认，但必须记录确认依据和风险等级。
 - 目标确认记录包含确认人、时间、版本和备注。
 - 目标变更后必须生成新版本。
 
@@ -545,7 +657,7 @@ goal:
 - Agent 基于目标、假设和约束生成小目标树。
 - 每个小目标必须包含支撑逻辑。
 - 每个小目标必须说明它来自哪一个上游目标、假设、约束或 review 结论。
-- 支持按时间、业务模块、漏斗环节、组织职能、充分条件等方式拆解。
+- 支持按必要条件覆盖、时间、业务模块、漏斗环节和组织职能等方式拆解，并记录整组路径的联合充分假设。
 - 支持展示小目标之间的依赖关系。
 - 支持标记关键小目标。
 - 支持将行动计划继续拆解为下一层工作单元，并复用同一套理解、确认、拆解、执行和 review 流程。
@@ -588,7 +700,8 @@ sub_goal:
 
 验收标准：
 
-- 未确认的关键小目标不能生成正式任务。
+- 未通过对应风险策略的关键小目标不能生成正式行动。
+- 低风险、可逆、证据充分的小目标允许经 Agent 互审后自动生成正式行动。
 - 确认记录可追溯。
 - 重新拆解必须保留历史版本。
 
@@ -641,6 +754,10 @@ task:
 功能要求：
 
 - 支持将任务分配给不同 Agent。
+- 支持 Agent 根据能力、权限和工具将工作委派给其他 Agent。
+- 支持被委派 Agent 接受、拒绝或要求补充上下文。
+- 支持独立 Agent 对拆解方案、证据和验收结果进行互审。
+- Agent 分歧必须以 Claim / Inference / Evidence 形式回写图谱，不能只保留聊天记录。
 - 支持 Agent 调用外部工具和企业系统。
 - 支持任务状态自动更新。
 - 支持 Agent 在遇到权限、数据缺失、判断不确定时请求人工介入。
@@ -654,6 +771,25 @@ task:
 - Agent 无法继续执行时必须进入 blocked 状态并说明原因。
 - 关键工具调用必须可审计。
 - Agent 执行结果必须关联来源任务和证据节点。
+- 任意委派必须记录委派方、承接方、能力匹配依据、权限范围和返回结果。
+
+### 8.7.1 风险分级与自动推进
+
+功能要求：
+
+- 对每个 Action 和 Decision 评估影响范围、可逆性、权限、成本、证据充分度与 Agent 分歧。
+- 输出 `auto`、`peer_review` 或 `human_decision` 三种治理等级。
+- `auto` 自动推进并记录理由。
+- `peer_review` 至少由一个独立 Agent 审查；审查不通过则补证、修改或升级。
+- `human_decision` 生成决策待办，展示来源、选项、证据、风险和影响范围。
+- 策略变化只影响后续动作；历史动作保留当时策略版本。
+
+验收标准：
+
+- 相同输入和策略版本应得到可复现的治理等级。
+- 任意升级到人类决策的事项必须展示触发规则。
+- 无权限行动不得因低风险而自动执行。
+- 证据冲突或 Agent 审查不通过时不得继续自动推进。
 
 ### 8.8 证据回填
 
@@ -922,165 +1058,143 @@ task:
 
 ## 10. 数据模型草案
 
-### 10.1 Goal
+### 10.1 GraphObject
+
+```yaml
+GraphObject:
+  id: string
+  graph_id: string
+  version: string
+  type: goal | claim | evidence | inference | decision | action | outcome | policy
+  title: string
+  payload: object
+  source_refs: SourceRef[]
+  confidence: low | medium | high
+  extraction_mode: explicit | inferred | human_created | agent_created
+  confirmation_status: candidate | confirmed | rejected | revised
+  access_policy_id: string
+  created_by_type: human | agent | system
+  created_by_id: string
+  created_at: datetime
+  supersedes_id: string | null
+```
+
+### 10.2 Goal
 
 ```yaml
 Goal:
-  id: string
-  version: string
-  source_node_id: string | null
-  raw_expression: string
-  normalized_description: string
-  metric: string
-  target_value: string
-  market_scope: string
-  time_range: string
+  object_id: string
+  parent_goal_id: string | null
+  description: string
   owner_id: string
-  status: draft | pending_approval | approved | revised | archived
-  assumptions: Assumption[]
-  constraints: Constraint[]
+  metric: string | null
+  target_value: string | null
+  time_range: string | null
   success_criteria: AcceptanceCriterion[]
-  approval_records: ApprovalRecord[]
+  status: draft | active | at_risk | achieved | failed | archived
+  aggregate:
+    progress: number | null
+    risk_count: number
+    blocked_count: number
+    decision_count: number
+    active_agent_count: number
 ```
 
-### 10.2 SubGoal
+### 10.3 Claim
 
 ```yaml
-SubGoal:
-  id: string
-  goal_id: string
-  parent_sub_goal_id: string | null
-  source_node_id: string
-  description: string
-  support_logic: string
-  metric: string
-  target_value: string
-  owner_id: string
-  dependencies: string[]
-  risks: Risk[]
-  status: draft | pending_approval | approved | executing | achieved | failed
+Claim:
+  object_id: string
+  proposition: string
+  claim_type: fact | assumption | inference
+  modality: required | forbidden | encouraged | suggested | neutral
+  valid_from: datetime | null
+  valid_until: datetime | null
 ```
 
-### 10.3 Task
+### 10.4 Inference
 
 ```yaml
-Task:
-  id: string
-  sub_goal_id: string
-  source_node_id: string
-  reasoning_record_id: string
-  description: string
-  owner_type: agent | human | team
-  owner_id: string
-  dependencies: string[]
-  status: pending | running | blocked | done | rejected
-  priority: low | medium | high | critical
-  acceptance_criteria: AcceptanceCriterion[]
-  required_evidence: EvidenceRequirement[]
-  evidence_ids: string[]
+Inference:
+  object_id: string
+  input_object_ids: string[]
+  relation_type: supports | refutes | causes | requires | constrains | depends_on | decomposes_to | precedes
+  output_object_ids: string[]
+  reasoning_steps: string[]
+  reviewer_ids: string[]
 ```
 
-### 10.4 Evidence
+### 10.5 Evidence
 
 ```yaml
 Evidence:
-  id: string
+  object_id: string
   source_type: data | document | link | log | screenshot | approval | experiment
   source_uri: string
-  description: string
-  related_task_id: string
-  related_sub_goal_id: string
-  related_goal_id: string
-  confidence: low | medium | high
-  created_by: string
-  created_at: datetime
+  source_location: string
+  captured_at: datetime
+  supports_object_ids: string[]
+  refutes_object_ids: string[]
+  freshness_status: current | stale | unknown
 ```
 
-### 10.5 WorkGraph
+### 10.6 Action
 
 ```yaml
-WorkGraph:
-  id: string
-  root_goal_id: string
-  nodes:
-    - id: string
-      type: raw_intent | goal | assumption | constraint | sub_goal | task | evidence | acceptance | exception | decision
-      payload: object
-      version: string
-      access_policy_id: string
-      parent_visibility: visible | hidden_by_permission | none
-      source_node_ids: string[]
-      downstream_node_ids: string[]
-  edges:
-    - id: string
-      source_node_id: string
-      target_node_id: string
-      relation_type: supports | depends_on | proves | blocks | revises | approves | impacts | derives_from | decomposes_to | feedback_to | reviews
-      confidence: low | medium | high
-      access_policy_id: string
-  snapshots:
-    - id: string
-      purpose: report | review | archive | external_share
-      generated_at: datetime
+Action:
+  object_id: string
+  goal_id: string
+  owner_type: agent | human | team
+  owner_id: string
+  delegated_by_id: string | null
+  tool_ids: string[]
+  dependency_ids: string[]
+  risk_level: low | medium | high | critical
+  governance_mode: auto | peer_review | human_decision
+  governance_reason: string[]
+  acceptance_criteria: AcceptanceCriterion[]
+  required_evidence: EvidenceRequirement[]
+  status: candidate | pending | running | blocked | completed | rejected | invalidated
 ```
 
-### 10.6 ReasoningRecord
+### 10.7 Decision
 
 ```yaml
-ReasoningRecord:
-  id: string
-  decision_type: goal_approval | sub_goal_approval | task_generation | exception_decision | acceptance | review | decomposition
-  source_node_ids: string[]
-  input_x:
-    evidence_ids: string[]
-    assumptions: string[]
-    constraints: string[]
-    context: object
-  process_fx:
-    selected_premises: string[]
-    evidence_comparisons: string[]
-    constraint_handling: string[]
-    reasoning_steps: string[]
-    model_judgment: string
-    human_preference: string
-  output_y:
-    node_ids: string[]
-    conclusion_summary: string
-    action_plan: string[]
-  confidence: low | medium | high
-  created_by: string
-  retrospective:
-    actual_outcome: string
-    judgment_quality: good | neutral | poor | unknown
-    process_calibration_suggestion: string
-```
-
-### 10.6.1 WorkUnit
-
-```yaml
-WorkUnit:
-  id: string
-  node_id: string
-  level: company | business | project | task | evidence
-  source_node_ids: string[]
-  parent_goal_id: string
-  objective_summary: string
-  assumptions: string[]
-  constraints: string[]
-  decomposition_node_ids: string[]
+Decision:
+  object_id: string
+  decision_type: goal | action | exception | acceptance | permission | resource
+  decision_maker_type: human | agent
+  decision_maker_id: string
+  option_ids: string[]
+  selected_option_id: string
   evidence_ids: string[]
-  review_record_ids: string[]
-  status: understanding | pending_confirmation | decomposing | executing | reviewing | completed | blocked
+  impact_object_ids: string[]
+  policy_version: string
+  decided_at: datetime
 ```
 
-### 10.6.2 ReviewRecord
+### 10.8 Policy
+
+```yaml
+Policy:
+  object_id: string
+  scope: organization | workspace | graph | goal | action
+  rule_type: permission | risk | automation | evidence | retention
+  conditions: object
+  effect: allow | deny | require_peer_review | require_human_decision
+  priority: number
+  effective_from: datetime
+  effective_until: datetime | null
+```
+
+### 10.9 ReviewRecord
 
 ```yaml
 ReviewRecord:
   id: string
-  trigger_node_id: string
-  affected_node_ids: string[]
-  trigger_type: task_failed | dependency_blocked | evidence_missing | assumption_invalid | constraint_changed | acceptance_failed
+  trigger_object_id: string
+  affected_object_ids: string[]
+  trigger_type: action_failed | dependency_blocked | evidence_missing | evidence_conflict | assumption_invalid | policy_changed | acceptance_failed
   input_x:
     evidence_ids: string[]
     status_changes: string[]
@@ -1090,54 +1204,25 @@ ReviewRecord:
     options_considered: string[]
     reasoning_steps: string[]
   output_y:
-    decision: keep_plan | adjust_resource | reorder_tasks | revise_goal | redecompose
-    updated_node_ids: string[]
+    decision: keep_plan | adjust_resource | reorder_actions | revise_goal | redecompose | invalidate
+    updated_object_ids: string[]
     decision_todo_ids: string[]
   created_at: datetime
 ```
 
-### 10.7 FocusedWorkItem
+### 10.10 WorkGraph
 
 ```yaml
-FocusedWorkItem:
+WorkGraph:
   id: string
-  user_id: string
-  node_id: string
-  focus_type: favorite | watching | recommended
-  reason: string
-  notify_level: none | important | all
-  pinned: boolean
-  created_at: datetime
-```
-
-### 10.8 DecisionTodo
-
-```yaml
-DecisionTodo:
-  id: string
-  assignee_id: string
-  source_node_id: string
-  decision_type: goal_approval | sub_goal_approval | exception | acceptance | permission_grant | resource_tradeoff
-  title: string
-  impact_node_ids: string[]
-  evidence_ids: string[]
-  options: string[]
-  status: pending | decided | delegated | delayed | canceled
-  due_at: datetime
-```
-
-### 10.9 KnowledgeItem
-
-```yaml
-KnowledgeItem:
-  id: string
-  title: string
-  source_type: document | evidence | note | retrospective | external_link | graph_summary
-  related_node_ids: string[]
-  access_policy_id: string
-  source_uri: string
-  summary: string
-  created_at: datetime
+  root_goal_ids: string[]
+  object_ids: string[]
+  edge_ids: string[]
+  current_version: string
+  snapshots:
+    - id: string
+      purpose: document | report | review | archive | external_share
+      generated_at: datetime
 ```
 
 ## 11. 关键页面
@@ -1147,11 +1232,23 @@ KnowledgeItem:
 展示：
 
 - 用户权限内的整个工作图谱。
+- 图谱整体聚合：目标状态、风险、阻塞、待决策、活跃 Agent 和证据覆盖。
 - 当前节点、可展开子节点和可见上游路径。
 - 当前节点的来源链路、服务的更大目标和下游拆解结果。
+- 原始材料、候选结构、已确认图谱、Agent 运行和证据验收五个阶段。
 - 无权限上游节点的边界提示。
 - 节点详情、关系说明、最近更新和关联操作。
 - 从节点进入关注、决策待办、知识库和执行动作的入口。
+
+交互说明：
+
+1. 入口：用户登录后默认进入工作图谱。
+2. 首屏：展示根目标及下一级摘要，不一次性铺开全部节点。
+3. 展开：点击节点逐层查看 Goal、Claim、Inference、Action、Evidence 和 Outcome。
+4. 收起：节点保留聚合状态，用户不展开也能判断整体风险。
+5. 候选确认：材料解析结果默认是候选状态，支持确认、修正和驳回。
+6. 异常反馈：无法识别逻辑时展示原文和“不足以形成关系”，不得生成伪关系。
+7. 无权限：隐藏内容，仅展示权限边界和允许公开的聚合状态。
 
 ### 11.2 关注的工作
 
@@ -1181,43 +1278,52 @@ KnowledgeItem:
 - 无权限知识的边界提示。
 - 从知识条目回到相关图谱节点的入口。
 
-### 11.5 目标创建与理解页
+### 11.5 材料导入与图谱生成
 
 展示：
 
-- 自然语言输入框。
-- 背景材料上传。
-- 目标类型选择。
-- 参与 Agent 选择。
-- 目标理解稿、假设、约束、待澄清问题和确认门。
+- 原始材料输入或预置真实材料。
+- 原文与候选对象双栏对照。
+- 对象类型、关系类型、置信度、明确表达 / 系统推断状态。
+- 确认、修正、驳回和查看原文来源操作。
+- 确认后的图谱版本和下一步 Agent 拆解入口。
 
 ## 12. MVP 范围
 
 ### 12.1 MVP 必须包含
 
-- 工作图谱作为默认首页。
-- 图谱节点逐层展开。
-- 无权限上游节点隐藏和权限边界提示。
-- 关注的工作列表。
-- 决策待办列表。
-- 权限过滤后的知识库。
-- 自然语言创建目标。
-- 目标理解稿生成。
-- 目标确认门。
-- 小目标拆解。
-- 小目标确认门。
-- 工作单元来源追溯。
-- 基础 Review 回流机制。
-- 任务生成。
-- 基础任务状态管理。
-- 证据回填。
-- 异常回流。
-- 基础图谱节点详情和任务详情。
+MVP 只验证一条端到端链路：
+
+```text
+导入一份真实工作材料
+-> 生成带来源的候选对象与关系
+-> 人修正关键推理并形成正式图谱
+-> 两个或以上 Agent 完成拆解和互审
+-> 系统给出 auto / peer_review / human_decision 风险等级
+-> 模拟执行一个行动并回填证据
+-> 证据不足或前提失效触发 Review
+-> 展示受影响节点和新版本
+```
+
+必须包含：
+
+- 工作图谱作为默认首页，支持层级展开和收起状态聚合。
+- 一份预置真实工作材料及原文来源。
+- Goal、Claim、Inference、Action、Evidence、Policy 候选对象。
+- 候选确认、修正、驳回和原文定位。
+- 两个以上 Agent 的委派和互审记录。
+- 三种风险治理状态及可解释原因。
+- 一个自动推进案例和一个人类决策案例。
+- 一个证据验收与 Review 影响传播案例。
+- 基础权限边界和版本差异展示。
+- 关注、决策待办和知识库保留为图谱派生视图。
 
 ### 12.2 MVP 可以暂缓
 
 - 完整企业系统集成。
 - 自动调用真实业务系统执行。
+- 任意文档格式的高精度通用解析。
+- 生产级多 Agent 调度与资源隔离。
 - 复杂权限矩阵和跨租户继承。
 - 高级 BI 分析。
 - 行业模板市场。
@@ -1227,17 +1333,17 @@ KnowledgeItem:
 
 ### 13.1 MVP 指标
 
-- 目标理解稿首次确认率 >= 60%。
-- 小目标拆解人工修改率 <= 40%。
-- 自动生成任务采纳率 >= 50%。
-- 任务证据回填率 >= 70%。
-- 目标到任务拆解时间降低 >= 50%。
-- 工作单元来源链路完整率 >= 95%。
-- 下游阻塞触发上游 review 的覆盖率 >= 80%。
-- 工作图谱首屏可理解率 >= 70%。
-- 关注工作回访率 >= 40%。
-- 决策待办按时处理率 >= 80%。
-- 知识库权限内搜索命中率 >= 60%。
+当前没有真实用户基线，不设置未经验证的百分比目标。原型阶段记录以下事实指标，完成首轮测试后再设阈值：
+
+- 候选对象原文来源完整率。
+- 用户能够正确解释首屏整体目标、风险和下一步的比例。
+- 候选命题和关系的确认、修正、驳回分布。
+- 隐含关系、否定和数量约束的修正率。
+- Agent 拆解被互审维持、修正或升级的分布。
+- 自动推进、Agent 互审和人类决策的分布。
+- 无依据结论进入正式图谱的数量，目标为 0。
+- Review 后受影响节点识别遗漏数量，目标为 0。
+- 用户完成“材料到图谱到决策”闭环所需时间和阻塞点。
 
 ### 13.2 长期指标
 
@@ -1250,6 +1356,7 @@ KnowledgeItem:
 
 - 面向 CEO 展示结论、关键假设和确认点，不展示过多任务细节。
 - 面向执行者展示任务、依赖、证据和验收标准。
+- 默认先展示整体聚合，再按需递归展开细节。
 - 第一个 Tab 必须是用户权限内的整个工作图谱。
 - 第二个 Tab 承载收藏、关注和重要工作。
 - 第三个 Tab 只承载真正需要用户决策的事项。
@@ -1258,7 +1365,7 @@ KnowledgeItem:
 - Agent 讨论要可折叠，默认展示结构化结论。
 - 大段自然语言只作为输入和解释，不作为最终工作载体。
 - 文档只作为图谱的阅读视图、导出快照或汇报格式，不作为产品内的一等工作对象。
-- 用户的主要操作对象是目标、假设、小目标、任务、证据、验收和异常这些图谱节点。
+- 用户的主要操作对象是 Goal、Claim、Evidence、Inference、Decision、Action、Outcome 和 Policy。
 - 关键推理必须可追溯到 `f(x)`，让用户知道当时基于什么信息、经历什么推理过程、形成什么阶段结论。
 - 任何工作单元都必须展示来源、服务的上级目标和下游影响。
 - 下游失败或阻塞必须能回流到上游 review，而不能只作为局部任务状态存在。
@@ -1271,16 +1378,17 @@ KnowledgeItem:
 
 应对：
 
-- 设置目标确认门。
+- 解析结果默认是候选结构，不直接写入正式图谱。
 - 保留原始表达。
-- 展示待澄清问题。
+- 展示来源、置信度、明确表达 / 系统推断和待澄清问题。
+- 对否定、数量、权限和低置信度关系强制互审或人工确认。
 - 支持版本回滚和差异对比。
 
 ### 15.2 目标拆解不合理
 
 应对：
 
-- 设置小目标确认门。
+- 按风险决定自动推进、Agent 互审或人类确认。
 - 展示支撑逻辑。
 - 标记高风险假设。
 - 支持多方案对比。
@@ -1291,14 +1399,14 @@ KnowledgeItem:
 
 - 强制证据回填。
 - 支持证据来源追溯。
-- 对关键任务启用人工验收。
+- 对高风险行动启用人工验收，中风险行动由独立 Agent 互审。
 
 ### 15.4 产品过于复杂
 
 应对：
 
 - 用户入口心智保持四个 Tab：工作图谱、关注的工作、决策待办、知识库。
-- 底层工作模型仍保持目标决策层和任务执行层，避免暴露过多内部结构。
+- 底层保持工作事实层和运行治理层，避免把内部结构一次性暴露给用户。
 - 默认隐藏内部推理细节。
 - 只在确认、异常和复盘时展开推理依据。
 
@@ -1313,17 +1421,18 @@ KnowledgeItem:
 
 ## 16. 版本规划
 
-### 16.1 v0.1：战略到任务闭环
+### 16.1 v0.1：真实材料到可执行图谱
 
-- 支持目标输入、理解、确认、小目标拆解、任务生成和证据回填。
+- 支持真实材料、候选结构、图谱确认、Agent 拆解、互审、风险分级、模拟执行和证据回填。
 - 支持工作图谱、关注的工作、决策待办、知识库四个主入口。
 - 支持基础权限过滤和无权限上游边界提示。
-- 以人工确认和半自动执行为主。
+- 以有限 Agent 和可解释规则验证端到端闭环。
 
 ### 16.2 v0.2：多 Agent 协作增强
 
 - 支持更多专项 Agent。
 - 支持 Agent 分歧管理。
+- 支持 Agent 能力匹配、委派和自动推进策略。
 - 支持多拆解方案对比。
 - 支持更精细的关注推荐、决策待办优先级和知识库图谱化检索。
 
@@ -1337,3 +1446,19 @@ KnowledgeItem:
 - 支持组织级目标体系。
 - 支持跨部门执行治理。
 - 支持复盘和组织知识沉淀。
+- 支持少量人类治理大量 Agent 的组织运行。
+
+## 17. Todo List 与结论
+
+| 状态 | 事项 | 说明 |
+|---|---|---|
+| 已完成 | 更新立项定位 | 从“每人一个 Agent 助理”升级为 Agent 原生组织工作系统 |
+| 已完成 | 统一对象模型 | 工作图谱是唯一事实源，Goal Node 是目标容器 |
+| 已完成 | 定义风险治理 | 区分自动推进、Agent 互审和人类决策 |
+| 进行中 | 调整交互原型 | 用真实材料展示候选图谱与运行治理闭环 |
+| 待验证 | 材料解析正确性 | 需通过真实材料和人工标注评估，不假设正则结果正确 |
+| 待研发评估 | Agent 委派与互审协议 | MVP 可先模拟，生产能力需要独立技术方案 |
+| 待确认 | SaaS / 私有化 / 海外差异 | 当前原型不覆盖，不影响本轮概念验证 |
+| 暂不处理 | 商业化、版本权益和计费 | 尚未进入商业化设计阶段 |
+
+结论：当前可以进入概念验证原型评审，但不能进入生产研发评审。原型必须优先证明真实材料能否形成可修正的工作图谱，以及风险分级后人类是否只处理真正需要决策的事项。

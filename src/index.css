@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 :root {
-  font-family: Inter, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-family: Aptos, "Segoe UI Variable", "PingFang SC", "Hiragino Sans GB", sans-serif;
   line-height: 1.5;
   font-weight: 400;
 

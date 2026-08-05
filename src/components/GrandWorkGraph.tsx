@@ -1,1581 +1,2673 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Activity,
   ArrowRight,
-  BrainCircuit,
+  Bot,
   Check,
-  CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  CircleDot,
+  Clock3,
+  Focus,
+  FileCheck2,
   GitBranch,
-  Plus,
-  RefreshCw,
+  Layers3,
+  Map,
+  Maximize2,
+  Network,
+  PanelTop,
+  Play,
   RotateCcw,
+  Send,
   ShieldCheck,
+  Sparkles,
   Target,
-  AlertTriangle,
-  Wand2,
+  UserRound,
 } from "lucide-react";
-import { extractLogicChain } from "../lib/logic-extractor";
+import {
+  requestAgentProposal,
+  type AgentProposal,
+} from "@/lib/workgraph-agent";
 
-/* ── 数据模型 ── */
+type CanvasStage = "goal" | "conditions" | "path" | "execute" | "verify";
+type WorkspaceView = "map" | "canvas" | "dependencies" | "evidence" | "monitor" | "timeline";
 
-type LogicNode = {
-  text: string;
-  relationLabel?: string;
-  chain?: LogicNode[];
+type StageDrafts = Record<string, string>;
+
+type WorkspaceVersion = {
+  key: string;
+  draft: string;
+  savedAt: string;
 };
 
-type ReasoningTrace = {
-  input: LogicNode[];
-  logic: LogicNode[];
-  output: LogicNode[];
-  redoImpact?: string[];
+type PersistedWorkspace = {
+  drafts: StageDrafts;
+  confirmedDrafts: string[];
+  methodByStage: Record<string, string>;
+  versions: WorkspaceVersion[];
 };
 
-type ReasonedItem = {
-  text: string;
-  reasoning: ReasoningTrace;
-};
+const workspaceStorageKey = "workgraph:mvp-workspace:v1";
 
-type WorkItem = {
-  title: string;
-  owner: string;
-  status: string;
-  reasoning: ReasoningTrace;
+function loadWorkspace(): PersistedWorkspace {
+  const empty: PersistedWorkspace = {
+    drafts: {},
+    confirmedDrafts: [],
+    methodByStage: {},
+    versions: [],
+  };
+  if (typeof window === "undefined") return empty;
+
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? "null");
+    if (!stored || typeof stored !== "object") return empty;
+    return {
+      drafts: stored.drafts ?? {},
+      confirmedDrafts: stored.confirmedDrafts ?? [],
+      methodByStage: stored.methodByStage ?? {},
+      versions: stored.versions ?? [],
+    };
+  } catch {
+    return empty;
+  }
+}
+
+type MethodDefinition = {
+  id: string;
+  name: string;
+  summary: string;
+  source: string;
+  sourceUrl?: string;
+  checks: string[];
 };
 
 type GoalNode = {
   id: string;
-  level: string;
   title: string;
+  level: number;
+  parentId?: string;
+  relation?: string;
   owner: string;
   status: string;
-  parent?: string;
-  interpretation: ReasonedItem;
-  target: ReasonedItem;
-  assumptions: ReasonedItem[];
-  constraints: ReasonedItem[];
-  successCriteria: ReasonedItem[];
-  reasoning: ReasoningTrace;
-  children: WorkItem[];
-  actions: WorkItem[];
+  problem: string;
+  objective: string;
+  conditionSummary: string;
+  children: string[];
 };
 
-/* ── Mock 数据 ── */
-
-const goalNodes: GoalNode[] = [
-  {
-    id: "future-work",
-    level: "L0",
-    title: "设计未来办公系统",
+const goals: Record<string, GoalNode> = {
+  G0: {
+    id: "G0",
+    title: "创建未来的工作平台",
+    level: 0,
     owner: "产品负责人",
-    status: "进行中",
-    interpretation: {
-      text: "做一个以目标节点为中心的工作系统，让人和 Agent 围绕同一个目标持续推理、拆解、执行和复盘。",
-      reasoning: {
-        input: [
-          {
-            text: "用户原始意图：构建人和 Agent 共同协作的新办公模式",
-            chain: [
-              { text: "当前办公以文档为中心" },
-              { text: "文档无法被 Agent 直接执行和推理" },
-              { text: "→ 办公系统应以可推理对象为中心" },
-            ],
-          },
-          {
-            text: "当前办公工具断裂：聊天不可追踪，文档不可执行，任务缺少决策上下文",
-            chain: [
-              { text: "聊天承载讨论，但状态不可追踪" },
-              { text: "文档承载说明，但不可执行" },
-              { text: "项目管理承载任务，但缺少决策上下文" },
-              { text: "→ 三个工具各管一段，链路断裂" },
-            ],
-          },
-          { text: "Agent 需要结构化对象才能可靠协作，而不是自然语言聊天" },
-        ],
-        logic: [
-          {
-            text: "如果工作载体是目标节点而不是文档，每个工作都能向上追溯来源、向下拆解行动",
-            chain: [
-              { text: "文档是线性、扁平的" },
-              { text: "目标节点是结构化、有向的" },
-              { text: "→ 目标节点天然支持追溯和拆解" },
-            ],
-          },
-          { text: "如果人和 Agent 围绕同一个目标节点工作，协作边界清晰，各司其职" },
-          {
-            text: "如果推理过程被结构化记录，复盘时校准的是推理链本身，而不是重新翻聊天记录",
-            chain: [
-              { text: "传统复盘：翻聊天记录、找文档、问人" },
-              { text: "结构化推理：x → f(x) → y 一目了然" },
-              { text: "→ 复盘效率大幅提升，而且可追溯" },
-            ],
-          },
-        ],
-        output: [
-          { text: "产品核心对象是 Goal Node，不是文档" },
-          { text: "首页是目标节点工作台，不是空白文档或聊天窗口" },
-          { text: "每次推理记录 x、f(x)、y，支持 review 和 redo" },
-        ],
-        redoImpact: ["整个目标节点的定义会重新讨论。", "所有下级目标节点和行动都可能被重新拆解。"],
-      },
-    },
-    target: {
-      text: "4 周内完成可在线预览的核心原型，验证目标节点、结构化推理和人机协作闭环。",
-      reasoning: {
-        input: [
-          { text: "当前阶段是 MVP 验证，不是正式产品上线" },
-          { text: "核心需要验证的是目标节点模型是否成立、推理交互是否可用、人和 Agent 协作是否顺畅" },
-          { text: "团队资源有限，不能同时做完整企业功能" },
-        ],
-        logic: [
-          { text: "如果 4 周能做出在线原型，团队就能快速收集反馈并迭代" },
-          { text: "如果原型只验证核心闭环，就不会被次要功能拖慢" },
-          { text: "目标是验证假设，不是交付完整产品" },
-        ],
-        output: [
-          { text: "4 周时间窗口" },
-          { text: "交付物：可在线预览的核心原型" },
-          { text: "验证范围：目标节点、结构化推理、人机协作闭环" },
-        ],
-        redoImpact: ["时间窗口和交付范围的调整会影响所有子目标的排期。"],
-      },
-    },
-    assumptions: [
-      {
-        text: "目标节点比文档更适合承载连续工作上下文。",
-        reasoning: {
-          input: [
-            { text: "文档是线性阅读的，不适合多分支、多层级的工作追踪" },
-            { text: "项目管理和聊天工具只记录状态，不记录推理过程" },
-            { text: "Agent 需要结构化的输入，自然语言文档过于模糊" },
-          ],
-          logic: [
-            { text: "如果工作上下文是结构化的目标节点，Agent 可以直接读取和更新" },
-            { text: "如果工作链路是图谱而不是文档树，上下游关系、依赖和影响都是显式的" },
-            { text: "目标节点天然支持层级拆解，比文档的章节结构更适合工作分解" },
-          ],
-          output: [{ text: "产品核心载体是 Goal Node 图谱，不是文档" }],
-          redoImpact: ["如果这个假设被推翻，产品可能需要在文档和 Goal Node 之间做混合模型。"],
-        },
-      },
-      {
-        text: "用户需要先看懂工作从哪里来，再决定下一步做什么。",
-        reasoning: {
-          input: [
-            { text: "当前组织工作中，人们经常不知道手头任务的来源和目标" },
-            { text: "决策者需要看到全貌才能判断优先级和资源分配" },
-            { text: "Review 时如果只看结果不看推理过程，很难判断问题出在哪里" },
-          ],
-          logic: [
-            { text: "如果用户能向上追溯，就能理解当前工作的上下文和优先级" },
-            { text: "如果用户能看到推理过程，就能判断推理是否合理" },
-            { text: "目标链路的可见性是 review 和 redo 的前提" },
-          ],
-          output: [
-            { text: "每个目标节点都必须展示上游来源和推理依据" },
-            { text: "首页设计应该从目标链路开始，而不是从任务列表开始" },
-          ],
-          redoImpact: ["如果这个假设有偏差，首页信息架构可能需要重新设计。"],
-        },
-      },
-    ],
-    constraints: [
-      {
-        text: "只展示当前用户有权限看到的上游和知识。",
-        reasoning: {
-          input: [
-            { text: "企业工作有层级和部门边界，不是所有信息都对所有人可见" },
-            { text: "CEO 的战略讨论和一线员工的执行细节不在同一个权限范围内" },
-            { text: "权限控制是办公系统的底线要求" },
-          ],
-          logic: [
-            { text: "如果用户看到无权限的内容，会产生信息安全风险" },
-            { text: "如果无权限上游完全不可见，用户需要明确的边界提示" },
-            { text: "权限边界应该是一道清晰的'墙'，用户知道墙外有内容但不可访问" },
-          ],
-          output: [
-            { text: "向上追溯时，无权限上游只显示'权限边界'" },
-            { text: "下游拆解和行动只展示当前用户可见的部分" },
-          ],
-          redoImpact: ["权限模型变更会影响所有页面的可见内容范围。"],
-        },
-      },
-      {
-        text: "MVP 不做完整企业 IM 和项目管理替代。",
-        reasoning: {
-          input: [
-            { text: "MVP 目标是验证目标节点和推理模型，不是替代现有工具" },
-            { text: "企业 IM 和项目管理是成熟品类，直接替代难度大且没必要" },
-            { text: "MVP 应该聚焦差异化价值：推理驱动的目标拆解和 review" },
-          ],
-          logic: [
-            { text: "如果 MVP 试图替代 IM 和项目管理，会分散资源且用户迁移成本高" },
-            { text: "如果 MVP 只做目标节点和推理，可以和现有工具互补" },
-            { text: "差异化价值更容易被用户感知和记住" },
-          ],
-          output: [
-            { text: "MVP 不包含聊天、日历、看板等传统协作功能" },
-            { text: "MVP 聚焦：目标节点定义、推理、拆解、review" },
-          ],
-          redoImpact: ["如果后期需要集成 IM 或项目管理，架构需要支持外部工具对接。"],
-        },
-      },
-    ],
-    successCriteria: [
-      {
-        text: "任意工作都能追溯到上级目标。",
-        reasoning: {
-          input: [
-            { text: "核心假设：企业工作是一条不可断裂的推理链路" },
-            { text: "如果某个工作找不到来源，说明它可能是拍脑袋产生的" },
-            { text: "追溯性是 review 和 redo 的基础" },
-          ],
-          logic: [
-            { text: "如果每个 Goal Node 都有 parent 引用，追溯就是自动的" },
-            { text: "如果行动挂在 Goal Node 下，行动的来源就是它所属的 Goal Node" },
-            { text: "如果追溯中断，说明数据模型或工作流有缺陷" },
-          ],
-          output: [
-            { text: "所有 Goal Node 必须有 parent 或明确的来源引用" },
-            { text: "所有 Action 必须挂在某个 Goal Node 下" },
-          ],
-          redoImpact: ["这个标准不可妥协，如果达不到说明产品核心模型有问题。"],
-        },
-      },
-      {
-        text: "每次关键推理都有输入、逻辑和产物。",
-        reasoning: {
-          input: [
-            { text: "产品原则：推理办公的核心是记录每次 f(x)" },
-            { text: "如果只有结论没有推理过程，review 时无法判断结论是否合理" },
-            { text: "Agent 的推理过程需要被人类审计" },
-          ],
-          logic: [
-            { text: "如果推理过程被结构化记录，人和 Agent 的工作都可以被 review" },
-            { text: "如果没有推理记录，redo 就没有依据" },
-            { text: "结构化推理也是 Agent 间协作的基础" },
-          ],
-          output: [
-            { text: "每个推理步骤都有 x、f(x)、y 三段结构" },
-            { text: "每个推理步骤都可以被 review 和 redo" },
-          ],
-          redoImpact: ["如果推理记录不完整，review 和 redo 功能就不可用。"],
-        },
-      },
-      {
-        text: "下游阻塞能回流上游 review。",
-        reasoning: {
-          input: [
-            { text: "工作链路不能断：下游失败应该影响上游决策" },
-            { text: "如果下游阻塞被忽略，上游目标可能基于错误假设继续推进" },
-            { text: "反馈闭环是推理驱动工作的关键特征" },
-          ],
-          logic: [
-            { text: "如果下游异常能自动回流到上游，决策者就能及时调整" },
-            { text: "如果回流机制缺失，工作链路就会断裂" },
-            { text: "review 回流是这个产品和传统项目管理的关键区别" },
-          ],
-          output: [
-            { text: "下游异常自动生成 review 记录" },
-            { text: "上游目标节点显示待 review 状态" },
-            { text: "redo 时会展示受影响的下游范围" },
-          ],
-          redoImpact: ["回流机制的设计会影响整个产品的工作流和通知系统。"],
-        },
-      },
-    ],
-    reasoning: {
-      input: [
-        {
-          text: "用户希望未来办公系统不是文档中心",
-          chain: [
-            { text: "当前办公以文档为中心" },
-            { text: "文档无法被 Agent 直接执行" },
-            { text: "→ 办公系统应以可推理对象为中心" },
-          ],
-        },
-        {
-          text: "当前组织工作经常丢失来源和推理过程",
-          chain: [
-            { text: "决策在文档/会议里，执行在项目管理工具里" },
-            { text: "两个系统不互通，上下文断裂" },
-            { text: "→ 工作找不到来源，推理过程丢失" },
-          ],
-        },
-        { text: "Agent 需要结构化对象才能可靠协作" },
-      ],
-      logic: [
-        { text: "把所有工作统一为 Goal Node，避免 Goal / SubGoal / WorkUnit 概念分裂" },
-        { text: "每个 Goal Node 内置目标定义、假设约束、推理、行动、证据和 review" },
-        { text: "通过向下拆解和向上反馈保证工作链不断" },
-      ],
-      output: [
-        { text: "确认产品核心对象：Goal Node" },
-        { text: "首页改为目标节点工作台" },
-        { text: "每个格子都有推理过程，支持 review 和 redo" },
-      ],
-      redoImpact: ["整体目标定义变更会影响所有下级目标、行动和推理记录。"],
-    },
-    children: [
-      {
-        title: "定义目标节点模型",
-        owner: "产品负责人",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "用户反馈 Goal / SubGoal / WorkUnit 是一个东西" },
-            { text: "多个概念导致用户理解混乱" },
-            { text: "需要先明确核心对象才能设计其他功能" },
-          ],
-          logic: [
-            { text: "如果核心对象不统一，后续所有交互都会建立在混乱的概念之上" },
-            { text: "如果 Goal Node 是唯一核心对象，所有拆解、执行、review 都围绕它展开" },
-            { text: "先定义清楚模型，再设计交互，这是正确的产品开发顺序" },
-          ],
-          output: [
-            { text: "Goal Node 作为唯一核心对象" },
-            { text: "SubGoal = Child Goal Node，不是新类型" },
-            { text: "Task 降级为 Goal Node 内部 Action" },
-          ],
-          redoImpact: ["如果 Goal Node 模型变更，所有页面和交互都需要重新设计。"],
-        },
-      },
-      {
-        title: "设计结构化推理体验",
-        owner: "交互负责人",
-        status: "待确认",
-        reasoning: {
-          input: [
-            { text: "用户反馈界面太乱、像说明书" },
-            { text: "当前推理展示是整体性的，没有下沉到每个格子" },
-            { text: "推理是产品的核心差异化" },
-          ],
-          logic: [
-            { text: "如果每个格子都能看到推理过程，用户就能理解工作不是凭空产生的" },
-            { text: "如果推理过程可 review 和 redo，用户就能参与决策" },
-            { text: "推理体验的设计直接影响用户对产品的第一印象" },
-          ],
-          output: [
-            { text: "每个目标节点内的格子都有推理入口" },
-            { text: "点击任意格子可展开推理 x/f(x)/y" },
-            { text: "Review 和 Redo 挂在每个推理上" },
-          ],
-          redoImpact: ["推理交互的变更会影响所有页面的信息架构。"],
-        },
-      },
-      {
-        title: "打通执行与证据回流",
-        owner: "Agent 编排",
-        status: "待拆解",
-        reasoning: {
-          input: [
-            { text: "推理产生行动，行动需要执行，执行需要证据" },
-            { text: "如果执行结果不回流传给推理，推理就无法校准" },
-            { text: "证据回流是推理闭环的关键环节" },
-          ],
-          logic: [
-            { text: "如果行动执行后证据自动回填到 Goal Node，推理就有了反馈" },
-            { text: "如果证据不足或异常，系统应该触发 review" },
-            { text: "执行和推理的闭环是 WorkGraph 区别于传统项目管理的关键" },
-          ],
-          output: [
-            { text: "Action 执行后自动回填证据到所属 Goal Node" },
-            { text: "异常自动触发 review 回流" },
-            { text: "证据链可追溯，支持验收判断" },
-          ],
-          redoImpact: ["执行和证据回流的架构会影响整个 Agent 调度和通知系统。"],
-        },
-      },
-    ],
-    actions: [
-      {
-        title: "确认 Goal Node 字段是否足够",
-        owner: "产品负责人",
-        status: "待决策",
-        reasoning: {
-          input: [
-            { text: "当前 Goal Node 包含 interpretation、target、assumptions、constraints、successCriteria、reasoning、children、actions" },
-            { text: "需要确认这些字段是否覆盖了目标节点的所有必要信息" },
-            { text: "字段太多会增加复杂度，太少会丢失关键信息" },
-          ],
-          logic: [
-            { text: "如果字段不够，后续拆解时可能缺少必要的上下文" },
-            { text: "如果字段太多，用户创建目标节点的成本会很高" },
-            { text: "需要在实际使用中验证字段的充分性和必要性" },
-          ],
-          output: [
-            { text: "请产品负责人确认当前字段列表" },
-            { text: "如有缺失，补充字段定义" },
-            { text: "如有冗余，标记为可选或移除" },
-          ],
-          redoImpact: ["字段变更会影响所有 Goal Node 的数据结构和页面展示。"],
-        },
-      },
-      {
-        title: "每个格子补充推理过程",
-        owner: "交互负责人",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "用户要求每个格子都有推理过程" },
-            { text: "当前只有 Goal Node 级别的推理，没有下沉" },
-            { text: "推理是产品核心价值，需要渗透到每个细节" },
-          ],
-          logic: [
-            { text: "如果每个格子都有推理，用户就能理解为什么这个子目标存在" },
-            { text: "如果每个推理都可以 review，review 就能精准定位问题步骤" },
-            { text: "如果每个推理都可以 redo，redo 的影响范围就是可计算的" },
-          ],
-          output: [
-            { text: "每个假设、约束、成功标准、子目标、行动都附带推理过程" },
-            { text: "点击任意格子可展开推理 x/f(x)/y" },
-            { text: "每个推理都有 Review 和 Redo 按钮" },
-          ],
-          redoImpact: ["如果某个推理被 redo，该推理产出的格子内容会变化，所有依赖它的下游格子需要重新评估。"],
-        },
-      },
-    ],
+    status: "设计中",
+    problem: "当前只有前端交互原型，尚未形成可保存、可执行、可验证的真实工作系统。",
+    objective: "让团队直接在 WorkGraph 中建设 WorkGraph，并让图谱成为项目唯一、可追溯的工作事实源。",
+    conditionSummary: "7 条产品成立条件全部具备真实证据，且至少一条需求从提出到验收完全在系统内完成",
+    children: ["G0.1", "G0.2", "G0.3", "G0.4", "G0.5", "G0.6", "G0.7"],
   },
-  {
-    id: "node-model",
-    level: "L1",
-    title: "定义目标节点模型",
-    owner: "产品负责人",
-    status: "进行中",
-    parent: "设计未来办公系统",
-    interpretation: {
-      text: "把 Goal、SubGoal、WorkUnit 收敛为同一个目标节点对象，并定义它在产品里的字段和操作。",
-      reasoning: {
-        input: [
-          { text: "用户明确说 Goal / SubGoal / WorkUnit 是一个东西" },
-          { text: "旧界面有三个概念并行出现，导致用户困惑" },
-          { text: "产品需要简洁清晰的核心概念" },
-        ],
-        logic: [
-          { text: "如果核心对象只有一个，用户的学习成本最低" },
-          { text: "如果 SubGoal 只是 Goal Node 的 child，概念上就不需要新名词" },
-          { text: "如果 WorkUnit 只是 Goal Node 在不同层级的表现，统一命名更清晰" },
-        ],
-        output: [
-          { text: "Goal Node 是唯一核心对象" },
-          { text: "上级视角叫 Child Goal Node，负责人视角叫 My Goal，系统视角叫 Goal Node" },
-        ],
-        redoImpact: ["如果核心对象模型变更，整个产品需要重新定义。"],
-      },
-    },
-    target: {
-      text: "让用户一眼理解：所有工作都是 Goal Node，只是层级、负责人和上下游关系不同。",
-      reasoning: {
-        input: [
-          { text: "用户三次重复'Goal / SubGoal / WorkUnit 是一个东西'，说明概念混淆是核心痛点" },
-          { text: "产品需要让用户在 10 秒内理解核心概念" },
-          { text: "如果概念不清，用户不会继续使用" },
-        ],
-        logic: [
-          { text: "如果用户看到页面只出现一个核心对象，就不会产生概念混淆" },
-          { text: "如果层级关系用视觉层次表达，而不是用不同名词，理解成本更低" },
-          { text: "目标不是在文档里讲清楚概念，而是在界面上让用户直接感知" },
-        ],
-        output: [
-          { text: "页面中只出现 Goal Node 一种核心对象" },
-          { text: "层级关系通过视觉层次表达，不引入新名词" },
-          { text: "用户不需要读文档就能理解产品在做什么" },
-        ],
-        redoImpact: ["目标调整会影响所有页面的信息架构和文案。"],
-      },
-    },
-    assumptions: [
-      {
-        text: "减少概念数量会降低理解成本。",
-        reasoning: {
-          input: [
-            { text: "认知心理学：人类工作记忆有限，概念越多越难理解" },
-            { text: "现有产品（Notion、Asana、Jira）都有多个核心概念，学习曲线陡峭" },
-            { text: "WorkGraph 是新产品，用户没有先验知识" },
-          ],
-          logic: [
-            { text: "如果只有一个核心概念，用户只需要理解一件事" },
-            { text: "如果多个概念可以用一个概念的不同状态表达，就不需要引入新概念" },
-            { text: "降低理解成本是新产品获客的关键" },
-          ],
-          output: [{ text: "核心概念只有一个：Goal Node" }],
-          redoImpact: ["如果这个假设不成立，可能需要重新引入 SubGoal 或 WorkUnit 等概念。"],
-        },
-      },
-      {
-        text: "目标节点可以承载从决策到执行的完整上下文。",
-        reasoning: {
-          input: [
-            { text: "传统工具中，决策在文档/会议里，执行在项目管理工具里，上下文断裂" },
-            { text: "Goal Node 的设计目标就是承载完整工作上下文" },
-            { text: "如果 Goal Node 不能承载完整上下文，用户就需要在多个工具间切换" },
-          ],
-          logic: [
-            { text: "如果 Goal Node 包含目标定义、推理、行动、证据，它就是一个完整的工作单元" },
-            { text: "如果 Goal Node 可以递归拆解，大目标和小工作都在同一个体系中" },
-            { text: "完整上下文意味着 review 时不需要翻找其他工具的信息" },
-          ],
-          output: [{ text: "Goal Node 包含：目标解释、目标值、假设、约束、成功标准、推理、子目标、行动、证据" }],
-          redoImpact: ["如果发现缺少关键字段，需要扩展 Goal Node 的数据模型。"],
-        },
-      },
-    ],
-    constraints: [
-      {
-        text: "不能让首页变成产品说明书。",
-        reasoning: {
-          input: [
-            { text: "用户反馈首页 Concept Map 和说明面板像产品说明书" },
-            { text: "产品说明书是给潜在用户看的，真实产品是给当前用户用的" },
-            { text: "真实产品应该让用户直接工作，而不是先学习概念" },
-          ],
-          logic: [
-            { text: "如果首页是概念说明，用户会觉得这不是一个可以用的产品" },
-            { text: "如果首页是真实工作台，用户可以直接开始工作" },
-            { text: "产品说明书可以放在帮助文档里，不应该占用首页空间" },
-          ],
-          output: [
-            { text: "首页是目标节点工作台，不是概念图" },
-            { text: "不展示'什么是 Goal Node'等说明卡片" },
-            { text: "概念通过交互传递，不通过文字说明传递" },
-          ],
-          redoImpact: ["如果产品太抽象用户无法理解，可能需要在首页加轻度引导。"],
-        },
-      },
-      {
-        text: "不能把 Task 设计成与 Goal Node 平级的核心对象。",
-        reasoning: {
-          input: [
-            { text: "传统项目管理中，Task 是核心对象，Goal/Epic 是上层概念" },
-            { text: "WorkGraph 的核心是推理和拆解，Task 只是执行单元" },
-            { text: "如果 Task 和 Goal Node 平级，概念数量又会增加" },
-          ],
-          logic: [
-            { text: "如果 Task 是 Goal Node 内部的 Action，它就不会独立于目标存在" },
-            { text: "如果 Action 需要独立负责人和继续拆解，它可以升格为新的 Goal Node" },
-            { text: "这样可以保持核心对象只有一个，同时不丢失灵活性" },
-          ],
-          output: [
-            { text: "Action 是 Goal Node 的内部字段，不是独立核心对象" },
-            { text: "Action 可以升格为 Goal Node" },
-          ],
-          redoImpact: ["如果发现 Action 需要更强的独立性，可能需要重新设计 Action 模型。"],
-        },
-      },
-    ],
-    successCriteria: [
-      {
-        text: "页面只出现一个核心对象。",
-        reasoning: {
-          input: [
-            { text: "核心设计目标：让用户一眼理解所有工作都是 Goal Node" },
-            { text: "如果页面出现多个核心对象名词，说明设计没有达到目标" },
-            { text: "这是判断产品是否简洁的核心标准" },
-          ],
-          logic: [
-            { text: "如果页面只出现 Goal Node，用户就不会混淆" },
-            { text: "如果出现 SubGoal 或 WorkUnit，说明概念收敛没有完成" },
-            { text: "这个标准是一票否决的" },
-          ],
-          output: [{ text: "所有页面文案只使用 Goal Node 和 Child Goal Node" }],
-          redoImpact: ["不达标意味着产品概念模型需要重新设计。"],
-        },
-      },
-      {
-        text: "下级目标仍能继续递归拆解。",
-        reasoning: {
-          input: [
-            { text: "Goal Node 模型的核心能力是递归拆解" },
-            { text: "如果统一模型后丢失了递归能力，说明模型有缺陷" },
-            { text: "递归拆解是工作链路不断的前提" },
-          ],
-          logic: [
-            { text: "如果 Child Goal Node 本身也是一个 Goal Node，它就可以继续拆解" },
-            { text: "如果不支持递归，拆解链就断了，违背产品原则" },
-            { text: "递归是模型自洽性的证明" },
-          ],
-          output: [
-            { text: "每个 Goal Node 都可以有 children" },
-            { text: "每个 Child Goal Node 也可以有自己的 children" },
-          ],
-          redoImpact: ["如果递归拆解有限制，需要明确限制条件并告知用户。"],
-        },
-      },
-    ],
-    reasoning: {
-      input: [
-        { text: "用户反馈 Goal / SubGoal / WorkUnit 是一个东西" },
-        { text: "旧界面 Concept Map 像说明书" },
-        { text: "需要更像真实产品" },
-      ],
-      logic: [
-        { text: "把 SubGoal 改成 Child Goal Node" },
-        { text: "把 WorkUnit 从核心概念中移除" },
-        { text: "把 Task 降级为 Goal Node 内部 Action" },
-      ],
-      output: [
-        { text: "核心对象统一为 Goal Node" },
-        { text: "首页改成目标节点工作台" },
-        { text: "概念图改为真实工作详情" },
-      ],
-      redoImpact: ["核心模型变更影响所有页面、数据结构和文档。"],
-    },
-    children: [
-      {
-        title: "定义 Goal Node 字段",
-        owner: "产品负责人",
-        status: "已确认",
-        reasoning: {
-          input: [
-            { text: "需要明确 Goal Node 包含哪些字段" },
-            { text: "字段设计影响数据模型、页面展示和交互" },
-            { text: "字段太少信息不完整，太多创建成本高" },
-          ],
-          logic: [
-            { text: "解释、目标值、假设、约束、成功标准是目标定义的必要信息" },
-            { text: "推理记录是产品核心差异化，必须包含" },
-            { text: "子目标和行动是拆解和执行的基本单元" },
-          ],
-          output: [{ text: "Goal Node 字段：interpretation、target、assumptions、constraints、successCriteria、reasoning、children、actions" }],
-          redoImpact: ["字段变更影响所有数据结构和页面。"],
-        },
-      },
-      {
-        title: "定义 Goal Node 关系",
-        owner: "架构 Agent",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "Goal Node 之间需要有关系来表达拆解、反馈、依赖" },
-            { text: "关系类型决定了图谱的丰富度和可用性" },
-            { text: "关系设计影响权限、通知和 review 回流" },
-          ],
-          logic: [
-            { text: "decomposes_to 表达向下拆解" },
-            { text: "feedback_to 表达向上回流" },
-            { text: "reviews 表达 review 关系" },
-            { text: "depends_on 表达依赖关系" },
-          ],
-          output: [{ text: "四种关系类型：decomposes_to、feedback_to、reviews、depends_on" }],
-          redoImpact: ["关系类型变更影响图谱可视化和通知系统。"],
-        },
-      },
-      {
-        title: "Review / Redo 规则",
-        owner: "复盘 Agent",
-        status: "待确认",
-        reasoning: {
-          input: [
-            { text: "Review 和 Redo 是推理驱动工作的核心操作" },
-            { text: "需要明确什么时候触发 review、redo 影响什么范围" },
-            { text: "规则不清会导致 review 机制不可用" },
-          ],
-          logic: [
-            { text: "如果下游异常，自动触发上游 review" },
-            { text: "如果推理被 redo，所有依赖该推理产出的格子都需要重新评估" },
-            { text: "Redo 前必须展示影响范围，避免意外连锁反应" },
-          ],
-          output: [
-            { text: "Review 触发条件：下游阻塞、证据不足、假设失效" },
-            { text: "Redo 影响范围：所有依赖该推理产出的 Goal Node 和 Action" },
-          ],
-          redoImpact: ["Review/Redo 规则变更影响整个工作流引擎。"],
-        },
-      },
-    ],
-    actions: [
-      {
-        title: "更新 PRD 术语",
-        owner: "产品负责人",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "PRD 中还有大量 SubGoal、WorkUnit、小目标等旧术语" },
-            { text: "术语不一致会导致团队沟通混乱" },
-            { text: "PRD 是团队的主要参考文档" },
-          ],
-          logic: [
-            { text: "如果 PRD 术语不统一，工程师和设计师会基于旧术语做实现" },
-            { text: "术语统一应该从文档开始，再到代码" },
-            { text: "PRD 更新后，其他文档也应同步" },
-          ],
-          output: [
-            { text: "PRD 中所有 SubGoal → Child Goal Node" },
-            { text: "PRD 中所有 WorkUnit → Goal Node" },
-            { text: "PRD 中所有 小目标 → 子目标节点" },
-          ],
-          redoImpact: ["术语变更影响所有文档和代码中的文案。"],
-        },
-      },
-      {
-        title: "同步前端文案",
-        owner: "工程 Agent",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "前端代码中还有旧术语" },
-            { text: "用户看到的是前端界面，不是文档" },
-            { text: "前端文案是用户对产品的第一印象" },
-          ],
-          logic: [
-            { text: "如果前端文案和 PRD 不一致，用户会困惑" },
-            { text: "如果旧术语出现在界面上，概念收敛就没有完成" },
-            { text: "前端文案应该和 PRD 保持同步" },
-          ],
-          output: [{ text: "前端所有文案统一为 Goal Node 和 Child Goal Node" }],
-          redoImpact: ["文案变更影响所有页面组件。"],
-        },
-      },
-    ],
+  "G0.1": {
+    id: "G0.1",
+    title: "建立自洽的工作图谱模型",
+    level: 1,
+    parentId: "G0",
+    relation: "N1 · 必要条件",
+    owner: "产品架构",
+    status: "设计中",
+    problem: "核心概念已基本形成，但对象、关系、状态和变更规则仍散落在文档与前端代码中。",
+    objective: "形成一套人和 Agent 都能无歧义读取、修改、验证和演进的工作图谱协议。",
+    conditionSummary: "对象、关系、目标契约、状态机和变更影响规则均有正式定义与校验样例",
+    children: ["G0.1.1", "G0.1.2", "G0.1.3", "G0.1.4"],
   },
-  {
-    id: "reasoning-ui",
-    level: "L1",
-    title: "设计结构化推理体验",
-    owner: "交互负责人",
+  "G0.2": {
+    id: "G0.2",
+    title: "让复杂图谱可理解、可操作",
+    level: 1,
+    parentId: "G0",
+    relation: "N2 · 必要条件",
+    owner: "产品设计",
+    status: "原型已实现",
+    problem: "递归 Goal 和多种视图已经能演示，但大图导航、视图一致性、状态反馈和可访问性仍未完成验证。",
+    objective: "让用户在同一层级结构中看全局、逐层下钻，并在需要时进入当前 Goal 的工作画布。",
+    conditionSummary: "用户无需说明即可完成定位、下钻、切换视图、编辑和返回，且不会丢失当前焦点",
+    children: ["G0.2.1", "G0.2.2", "G0.2.3", "G0.2.4"],
+  },
+  "G0.3": {
+    id: "G0.3",
+    title: "把自然语言与工作材料转成图谱",
+    level: 1,
+    parentId: "G0",
+    relation: "N3 · 必要条件",
+    owner: "语义 Agent",
+    status: "设计中",
+    problem: "当前示例数据由代码手写，逻辑提取能力没有接入真实工作入口，也不能持续同步材料变化。",
+    objective: "把聊天、文档、会议和用户输入转成保留来源、置信度与确认状态的候选图谱。",
+    conditionSummary: "任一候选节点可回溯原文，明确表达与系统推断严格区分，并可由人逐项确认",
+    children: ["G0.3.1", "G0.3.2", "G0.3.3", "G0.3.4"],
+  },
+  "G0.4": {
+    id: "G0.4",
+    title: "建设真实图谱基础设施",
+    level: 1,
+    parentId: "G0",
+    relation: "N4 · 必要条件",
+    owner: "平台工程",
+    status: "待实现",
+    problem: "当前所有修改只存在浏览器内存，刷新即丢失，没有后端、版本、权限和并发控制。",
+    objective: "提供可持久化、可查询、可授权、可审计的工作图谱服务。",
+    conditionSummary: "多人并发修改不丢失，任一版本可追溯，越权访问被阻断，图谱查询满足交互延迟要求",
+    children: ["G0.4.1", "G0.4.2", "G0.4.3", "G0.4.4"],
+  },
+  "G0.5": {
+    id: "G0.5",
+    title: "建立 Agent 协作与治理运行时",
+    level: 1,
+    parentId: "G0",
+    relation: "N5 · 必要条件",
+    owner: "Agent 平台",
+    status: "待实现",
+    problem: "界面中的 Agent 建议是前端规则样例，没有真实模型、工具调用、委派、互审或失败恢复。",
+    objective: "让多个 Agent 在权限和风险边界内领取、规划、执行、互审并回写同一张图谱。",
+    conditionSummary: "Agent 行为有身份、依据、权限、成本和结果记录，失败可恢复，高风险动作必须升级",
+    children: ["G0.5.1", "G0.5.2", "G0.5.3", "G0.5.4", "G0.5.5"],
+  },
+  "G0.6": {
+    id: "G0.6",
+    title: "跑通证据、验收与 Review 回流",
+    level: 1,
+    parentId: "G0",
+    relation: "N6 · 必要条件",
+    owner: "验证 Agent",
+    status: "待实现",
+    problem: "当前证据、验收、Review 和 Redo 都是静态展示，不能判断完成真假，也不能传播变更影响。",
+    objective: "让每个结果用证据验收，失败能定位错误推理并使受影响的下游重新评估。",
+    conditionSummary: "动作完成与目标达成被区分，证据可核验，Redo 前可计算并展示完整影响范围",
+    children: ["G0.6.1", "G0.6.2", "G0.6.3", "G0.6.4"],
+  },
+  "G0.7": {
+    id: "G0.7",
+    title: "达到可持续产品化基线",
+    level: 1,
+    parentId: "G0",
+    relation: "N7 · 验收条件",
+    owner: "产品与工程",
+    status: "开发中",
+    problem: "项目可以本地构建和预览，但缺少系统测试、真实用户验证、运行监控、安全检查和发布闭环。",
+    objective: "让 WorkGraph 能被持续开发、稳定发布，并用真实项目证明产品假设。",
+    conditionSummary: "核心链路有自动化测试与监控，安全风险受控，真实用户能独立完成完整项目闭环",
+    children: ["G0.7.1", "G0.7.2", "G0.7.3", "G0.7.4"],
+  },
+  "G0.1.1": {
+    id: "G0.1.1",
+    title: "定义节点模型",
+    level: 2,
+    parentId: "G0.1",
+    relation: "N1.1 · 必要条件",
+    owner: "模型 Agent",
+    status: "设计中",
+    problem: "Goal、Claim、Evidence 等对象已有概念说明，但字段必填性、生命周期和校验规则未固化。",
+    objective: "明确 Goal、Claim、Evidence、Decision 等对象的语义与字段。",
+    conditionSummary: "每类对象有 schema、合法样例、非法样例和生命周期测试",
+    children: [],
+  },
+  "G0.1.2": {
+    id: "G0.1.2",
+    title: "定义关系协议",
+    level: 2,
+    parentId: "G0.1",
+    relation: "N1.2 · 必要条件",
+    owner: "语义 Agent",
+    status: "设计中",
+    problem: "关系标签已在原型中出现，但方向、传递性、互斥规则和计算语义尚未完整定义。",
+    objective: "统一支撑、约束、依赖、反驳等关系的语义和计算规则。",
+    conditionSummary: "每种关系有方向、基数、约束和传播规则，歧义关系无法写入正式图谱",
+    children: [],
+  },
+  "G0.1.3": {
+    id: "G0.1.3",
+    title: "定义 Goal 契约与五阶段产物",
+    level: 2,
+    parentId: "G0.1",
+    relation: "N1.3 · 必要条件",
+    owner: "产品 Agent",
+    status: "原型已实现",
+    problem: "五阶段交互已实现，但各阶段的输入、输出、确认门和方法校验仍主要依赖展示文案。",
+    objective: "定义目标、成立条件、路线、执行、验收各阶段的正式产物和状态转换。",
+    conditionSummary: "任一阶段都能判断输入是否齐全、产物是否合格、谁有权确认以及何时可进入下一阶段",
+    children: [],
+  },
+  "G0.1.4": {
+    id: "G0.1.4",
+    title: "定义版本与影响传播语义",
+    level: 2,
+    parentId: "G0.1",
+    relation: "N1.4 · 必要条件",
+    owner: "架构 Agent",
     status: "待确认",
-    parent: "设计未来办公系统",
-    interpretation: {
-      text: "把一次推理拆成可读、可 review、可 redo 的结构化过程，并且下沉到每个格子。",
-      reasoning: {
-        input: [
-          { text: "用户要求每个格子都有推理交互" },
-          { text: "用户反馈旧界面太乱、像说明书" },
-          { text: "推理是产品核心差异化，交互质量决定用户是否理解产品价值" },
-        ],
-        logic: [
-          { text: "如果每个格子都有推理入口，用户就能理解任何工作都不是凭空产生的" },
-          { text: "如果推理过程是 x/f(x)/y 三段式，用户就能快速理解推理结构" },
-          { text: "如果推理支持 review 和 redo，用户就能参与决策校准" },
-        ],
-        output: [
-          { text: "每个格子都有推理过程" },
-          { text: "点击展开推理，x/f(x)/y 三段展示" },
-          { text: "Review 和 Redo 挂在每个推理上" },
-        ],
-        redoImpact: ["推理交互设计变更影响所有页面。"],
-      },
-    },
-    target: {
-      text: "用户能在 10 秒内看懂任意一个推理的输入、逻辑和产物。",
-      reasoning: {
-        input: [
-          { text: "办公场景下用户注意力有限，需要快速理解" },
-          { text: "如果推理展示过于复杂，用户会跳过不看" },
-          { text: "推理价值在于让用户快速判断推理是否合理" },
-        ],
-        logic: [
-          { text: "如果三段式结构清晰，用户扫一眼就能理解" },
-          { text: "如果每段只有 2-3 条关键信息，不会信息过载" },
-          { text: "10 秒是判断'是否合理'的合理时间窗口" },
-        ],
-        output: [
-          { text: "x/f(x)/y 三段式展示" },
-          { text: "每段不超过 3 条关键信息" },
-          { text: "推理面板默认折叠，点击展开" },
-        ],
-        redoImpact: ["目标调整会影响推理展示的设计细节。"],
-      },
-    },
-    assumptions: [
-      {
-        text: "三段式结构（x/f(x)/y）比散点图或聊天更易理解。",
-        reasoning: {
-          input: [
-            { text: "散点图适合展示关系，不适合展示推理过程" },
-            { text: "聊天适合对话，不适合结构化推理" },
-            { text: "三段式结构映射了推理的基本逻辑：输入→处理→输出" },
-          ],
-          logic: [
-            { text: "如果用户看到 x，就知道推理基于什么信息" },
-            { text: "如果用户看到 f(x)，就知道推理是怎么做的" },
-            { text: "如果用户看到 y，就知道推理产出了什么" },
-            { text: "三段式结构是推理的自然表达" },
-          ],
-          output: [{ text: "推理展示统一使用 x/f(x)/y 三段式" }],
-          redoImpact: ["如果用户觉得三段式不够直观，可能需要探索其他展示形式。"],
-        },
-      },
-      {
-        text: "用户需要看到人和 Agent 各自做了什么。",
-        reasoning: {
-          input: [
-            { text: "人机协作是产品核心定位" },
-            { text: "如果用户不知道哪些是 Agent 做的、哪些是人做的，就无法建立信任" },
-            { text: "透明性是人机协作的基础" },
-          ],
-          logic: [
-            { text: "如果推理过程中标注了责任主体，用户就能判断 Agent 的推理是否可靠" },
-            { text: "如果用户看到 Agent 的推理有问题，可以 redo 并要求人工介入" },
-            { text: "责任主体标注也是合规和审计的要求" },
-          ],
-          output: [
-            { text: "每个推理步骤标注责任主体（人或 Agent）" },
-            { text: "推理输入中标注信息来源（人提供 / Agent 采集）" },
-          ],
-          redoImpact: ["责任主体标注的设计会影响推理面板的信息密度。"],
-        },
-      },
-    ],
-    constraints: [
-      {
-        text: "不要在首屏堆太多概念卡。",
-        reasoning: {
-          input: [
-            { text: "用户反馈旧界面 Concept Map 和说明面板太乱" },
-            { text: "首屏应该让用户直接工作，而不是先学习" },
-            { text: "信息密度太高会导致认知过载" },
-          ],
-          logic: [
-            { text: "如果首屏只有当前目标节点的工作界面，用户就能立即开始工作" },
-            { text: "如果推理默认折叠，用户不会被打扰" },
-            { text: "概念通过交互传递，不通过卡片堆叠传递" },
-          ],
-          output: [
-            { text: "首屏只展示当前 Goal Node 的工作界面" },
-            { text: "推理默认折叠，点击展开" },
-            { text: "不展示概念说明卡片" },
-          ],
-          redoImpact: ["如果用户需要更多引导，可能需要在首屏增加轻度提示。"],
-        },
-      },
-      {
-        text: "Redo 必须显示影响范围。",
-        reasoning: {
-          input: [
-            { text: "用户要求：redo 后所有下游都可能发生变化" },
-            { text: "如果用户不知道 redo 会影响什么，就不敢点 redo" },
-            { text: "影响范围展示是 redo 功能可信赖的前提" },
-          ],
-          logic: [
-            { text: "如果 redo 前展示影响范围，用户就能做出知情决策" },
-            { text: "如果影响范围太大，用户可以选择局部 redo 或分批 redo" },
-            { text: "影响范围展示也是 redo 后自动通知下游的基础" },
-          ],
-          output: [
-            { text: "Redo 前展示影响范围列表" },
-            { text: "影响范围包括：依赖该推理产出的所有 Goal Node 和 Action" },
-          ],
-          redoImpact: ["影响范围计算逻辑需要和推理依赖图联动。"],
-        },
-      },
-    ],
-    successCriteria: [
-      {
-        text: "每次推理都有 x、f(x)、y。",
-        reasoning: {
-          input: [
-            { text: "产品原则：推理办公的核心是记录每次 f(x)" },
-            { text: "如果推理记录不完整，review 就无法进行" },
-            { text: "三段式结构是推理完整性的最低标准" },
-          ],
-          logic: [
-            { text: "如果推理缺 x，review 时不知道推理基于什么信息" },
-            { text: "如果推理缺 f(x)，review 时不知道推理是怎么做的" },
-            { text: "如果推理缺 y，review 时不知道推理产出了什么" },
-          ],
-          output: [{ text: "每个推理步骤强制包含 x、f(x)、y" }],
-          redoImpact: ["不达标意味着推理记录机制需要重新设计。"],
-        },
-      },
-    ],
-    reasoning: {
-      input: [
-        { text: "用户反馈太乱" },
-        { text: "旧页面同时出现概念图、阶梯、右侧解释面板" },
-        { text: "真实产品应服务当前工作" },
-      ],
-      logic: [
-        { text: "保留目标节点详情作为主视图" },
-        { text: "把推理过程下沉到每个格子" },
-        { text: "把右侧收敛为卡片内处理" },
-      ],
-      output: [
-        { text: "主区变成目标节点工作台" },
-        { text: "每个格子都有推理入口" },
-        { text: "推理在格子内展开，不单独占一个区域" },
-      ],
-      redoImpact: ["推理交互设计变更影响所有页面。"],
-    },
-    children: [
-      {
-        title: "推理输入设计",
-        owner: "交互负责人",
-        status: "已设计",
-        reasoning: {
-          input: [
-            { text: "推理输入 x 需要展示推理基于什么信息" },
-            { text: "输入信息可能来自人、Agent 或系统" },
-            { text: "输入需要在 review 时被审视" },
-          ],
-          logic: [
-            { text: "如果输入来源明确，用户就能判断输入是否可信" },
-            { text: "如果输入不完整，推理就不可靠" },
-            { text: "输入设计要考虑信息的可追溯性" },
-          ],
-          output: [{ text: "x 区域展示信息来源列表，每条标注来源（人/Agent/系统）" }],
-          redoImpact: ["输入设计变更会影响推理面板的布局。"],
-        },
-      },
-      {
-        title: "推理逻辑设计",
-        owner: "Agent",
-        status: "进行中",
-        reasoning: {
-          input: [
-            { text: "推理逻辑 f(x) 需要展示推理步骤" },
-            { text: "逻辑步骤需要可读、可审计" },
-            { text: "逻辑是 review 的核心对象" },
-          ],
-          logic: [
-            { text: "如果逻辑步骤清晰，review 时就能精准定位问题步骤" },
-            { text: "如果逻辑步骤可单独 redo，就能局部修正" },
-            { text: "逻辑步骤应该像代码 diff 一样可审视" },
-          ],
-          output: [{ text: "f(x) 区域展示推理步骤列表，每步可独立 review" }],
-          redoImpact: ["逻辑设计变更会影响推理面板的交互复杂度。"],
-        },
-      },
-      {
-        title: "推理产物设计",
-        owner: "产品负责人",
-        status: "待确认",
-        reasoning: {
-          input: [
-            { text: "推理产物 y 是推理的结论" },
-            { text: "产物可能是新的子目标、行动、假设或约束" },
-            { text: "产物是连接推理和工作的桥梁" },
-          ],
-          logic: [
-            { text: "如果产物是结构化的，就能被系统直接使用" },
-            { text: "如果产物是模糊的自然语言，就需要人工二次处理" },
-            { text: "产物应该直接映射到 Goal Node 的字段" },
-          ],
-          output: [{ text: "y 区域展示结构化产物列表，每个产物可操作（确认/修改/拒绝）" }],
-          redoImpact: ["产物设计变更会影响推理到工作的转换流程。"],
-        },
-      },
-    ],
-    actions: [
-      {
-        title: "确认推理卡片是否够清楚",
-        owner: "产品负责人",
-        status: "待决策",
-        reasoning: {
-          input: [
-            { text: "当前推理面板使用 x/f(x)/y 三段式" },
-            { text: "需要验证用户是否能快速理解推理结构" },
-            { text: "如果推理面板不清楚，用户不会使用 review 功能" },
-          ],
-          logic: [
-            { text: "如果用户能快速理解，三段式设计就是成功的" },
-            { text: "如果用户需要解释，说明设计需要调整" },
-            { text: "需要真实用户测试来验证" },
-          ],
-          output: [
-            { text: "请产品负责人确认当前推理卡片设计" },
-            { text: "如需要，安排用户测试" },
-          ],
-          redoImpact: ["如果推理卡片设计需要调整，影响所有页面的推理展示。"],
-        },
-      },
-      {
-        title: "验证用户是否能理解 redo",
-        owner: "研究 Agent",
-        status: "待开始",
-        reasoning: {
-          input: [
-            { text: "Redo 是新产品概念，用户可能不熟悉" },
-            { text: "Redo 的影响范围展示是用户信任的基础" },
-            { text: "需要在真实场景中验证 redo 交互" },
-          ],
-          logic: [
-            { text: "如果用户理解 redo 的含义和影响，就会使用它" },
-            { text: "如果用户不理解，可能误操作导致工作丢失" },
-            { text: "Redo 应该有确认步骤和撤销能力" },
-          ],
-          output: [
-            { text: "安排用户测试 redo 交互" },
-            { text: "收集反馈并优化" },
-          ],
-          redoImpact: ["Redo 交互设计变更会影响所有推理面板。"],
-        },
-      },
-    ],
+    problem: "修改上游推理后，哪些下游失效、保留或需复核尚无正式规则。",
+    objective: "定义图谱版本、确认状态、失效标记和上下游影响传播规则。",
+    conditionSummary: "任意变更都能生成版本差异，并准确标记需要重新确认的下游对象",
+    children: [],
   },
+  "G0.2.1": {
+    id: "G0.2.1",
+    title: "稳定层级导航与地图下钻",
+    level: 2,
+    parentId: "G0.2",
+    relation: "N2.1 · 必要条件",
+    owner: "交互 Agent",
+    status: "原型已实现",
+    problem: "此前地图下钻会意外切换画布，视图入口也曾抢占真正的层级目录。",
+    objective: "让 Goal 层级成为主导航，地图下钻保持地图，编辑动作才进入画布。",
+    conditionSummary: "连续下钻和返回时视图不变、焦点不丢、完整路径与直接下级始终可见",
+    children: [],
+  },
+  "G0.2.2": {
+    id: "G0.2.2",
+    title: "完善递归 Goal 画布",
+    level: 2,
+    parentId: "G0.2",
+    relation: "N2.2 · 必要条件",
+    owner: "产品设计",
+    status: "原型已实现",
+    problem: "画布已支持五阶段和共同编辑，但保存、冲突、阶段门和子画布上下文仍是模拟状态。",
+    objective: "让任意 Goal 都能独立完成五阶段推理，并可递归进入子 Goal。",
+    conditionSummary: "每个 Goal 的草稿、方法、确认状态和子 Goal 上下文独立保存且可恢复",
+    children: [],
+  },
+  "G0.2.3": {
+    id: "G0.2.3",
+    title: "支持大图检索、过滤与聚合",
+    level: 2,
+    parentId: "G0.2",
+    relation: "N2.3 · 必要条件",
+    owner: "图谱体验",
+    status: "待实现",
+    problem: "当前样例只有几十个节点，缺少大规模图谱下的搜索、折叠、筛选和聚合状态。",
+    objective: "让用户在上千节点中快速找到目标、理解局部与整体，并控制信息密度。",
+    conditionSummary: "按名称、负责人、状态和关系可检索过滤，折叠节点能显示风险、进度与待决策聚合",
+    children: [],
+  },
+  "G0.2.4": {
+    id: "G0.2.4",
+    title: "补齐响应式、无障碍与性能",
+    level: 2,
+    parentId: "G0.2",
+    relation: "N2.4 · 必要条件",
+    owner: "前端工程",
+    status: "待验证",
+    problem: "当前画布依赖较宽视口，键盘操作、窄屏布局和大图渲染性能未系统验证。",
+    objective: "让核心操作在常用桌面尺寸、键盘和辅助技术下可靠可用。",
+    conditionSummary: "核心流程满足键盘可达与清晰焦点，常用视口无关键操作遮挡，大图交互保持流畅",
+    children: [],
+  },
+  "G0.3.1": {
+    id: "G0.3.1",
+    title: "接入聊天、文档与会议来源",
+    level: 2,
+    parentId: "G0.3",
+    relation: "N3.1 · 必要条件",
+    owner: "连接器 Agent",
+    status: "待实现",
+    problem: "系统没有真实材料入口，无法从组织正在发生的工作中持续获得上下文。",
+    objective: "按权限读取聊天、文档、会议和用户直接输入，并保存来源锚点。",
+    conditionSummary: "每条材料有来源、作者、时间、权限和稳定定位，源内容不可访问时不会泄露正文",
+    children: [],
+  },
+  "G0.3.2": {
+    id: "G0.3.2",
+    title: "提取候选命题与语义关系",
+    level: 2,
+    parentId: "G0.3",
+    relation: "N3.2 · 必要条件",
+    owner: "语义 Agent",
+    status: "开发中",
+    problem: "现有逻辑提取偏规则演示，不能稳定处理跨句指代、隐含前提、冲突和长上下文。",
+    objective: "从材料中提取候选 Goal、Claim、Evidence 和关系，同时保留不确定性。",
+    conditionSummary: "基准样例可重复评测，错误提取可定位，低置信结果不会自动进入正式图谱",
+    children: [],
+  },
+  "G0.3.3": {
+    id: "G0.3.3",
+    title: "提供候选图谱确认工作台",
+    level: 2,
+    parentId: "G0.3",
+    relation: "N3.3 · 必要条件",
+    owner: "产品设计",
+    status: "待实现",
+    problem: "缺少从原文到候选结构再到正式图谱的人工审查入口。",
+    objective: "让用户逐项接受、修改、拒绝和合并候选节点与关系。",
+    conditionSummary: "用户能对照原文审查每项推断，批量操作可撤销，确认者和修改理由被记录",
+    children: [],
+  },
+  "G0.3.4": {
+    id: "G0.3.4",
+    title: "处理来源更新与图谱同步",
+    level: 2,
+    parentId: "G0.3",
+    relation: "N3.4 · 必要条件",
+    owner: "同步 Agent",
+    status: "待实现",
+    problem: "源文档或聊天上下文变化后，已确认图谱可能过期且用户无感知。",
+    objective: "检测来源变化，判断受影响节点，并发起增量复核而非静默覆盖。",
+    conditionSummary: "来源删除、修改和权限变化都会产生可追溯事件，并标记相关图谱对象待复核",
+    children: [],
+  },
+  "G0.4.1": {
+    id: "G0.4.1",
+    title: "实现图谱存储与领域 API",
+    level: 2,
+    parentId: "G0.4",
+    relation: "N4.1 · 必要条件",
+    owner: "后端工程",
+    status: "待实现",
+    problem: "数据硬编码在 React 组件中，没有服务端事实源。",
+    objective: "建立正式图谱存储、事务边界和领域 API。",
+    conditionSummary: "创建、读取、修改、关联和删除均通过 API 完成，刷新页面后状态完整恢复",
+    children: [],
+  },
+  "G0.4.2": {
+    id: "G0.4.2",
+    title: "实现图谱查询与索引",
+    level: 2,
+    parentId: "G0.4",
+    relation: "N4.2 · 必要条件",
+    owner: "数据工程",
+    status: "待实现",
+    problem: "依赖、祖先、后代、证据覆盖和影响范围目前由前端小数据临时计算。",
+    objective: "支持层级、关系、全文、权限过滤和影响分析查询。",
+    conditionSummary: "常用查询有明确语义和性能基线，结果在权限过滤前后均正确",
+    children: [],
+  },
+  "G0.4.3": {
+    id: "G0.4.3",
+    title: "实现组织身份与细粒度权限",
+    level: 2,
+    parentId: "G0.4",
+    relation: "N4.3 · 必要条件",
+    owner: "安全工程",
+    status: "待实现",
+    problem: "当前所有用户默认看到并修改全部样例数据，不符合企业工作边界。",
+    objective: "按组织、角色、图谱范围、对象类型和操作控制访问。",
+    conditionSummary: "无权限内容只暴露允许的边界信息，读写越权均被服务端拒绝并记录",
+    children: [],
+  },
+  "G0.4.4": {
+    id: "G0.4.4",
+    title: "实现版本、并发与审计",
+    level: 2,
+    parentId: "G0.4",
+    relation: "N4.4 · 必要条件",
+    owner: "平台工程",
+    status: "待实现",
+    problem: "没有乐观锁、版本差异、操作日志和冲突解决机制。",
+    objective: "确保人和多个 Agent 并发修改时不静默覆盖，并可还原每次变化。",
+    conditionSummary: "并发冲突可检测和处理，任一字段可追溯修改主体、依据、时间和前后版本",
+    children: [],
+  },
+  "G0.5.1": {
+    id: "G0.5.1",
+    title: "建立 Agent 身份与能力注册",
+    level: 2,
+    parentId: "G0.5",
+    relation: "N5.1 · 必要条件",
+    owner: "Agent 平台",
+    status: "待实现",
+    problem: "系统不知道有哪些 Agent、它们能调用什么工具、拥有什么权限和质量记录。",
+    objective: "维护 Agent 身份、能力、工具、权限、成本与历史表现。",
+    conditionSummary: "每次委派可解释为何选择该 Agent，越权工具无法调用，能力变化可版本化",
+    children: [],
+  },
+  "G0.5.2": {
+    id: "G0.5.2",
+    title: "实现规划、委派与状态回写",
+    level: 2,
+    parentId: "G0.5",
+    relation: "N5.2 · 必要条件",
+    owner: "编排 Agent",
+    status: "待实现",
+    problem: "当前没有真实任务队列和执行状态，Agent 不能领取或委派 Goal。",
+    objective: "让 Agent 从图谱读取上下文，生成计划、领取工作并持续回写状态和产物。",
+    conditionSummary: "委派链、输入版本、工具调用、阶段产物和最终结果完整记录且可重放",
+    children: [],
+  },
+  "G0.5.3": {
+    id: "G0.5.3",
+    title: "实现 Agent 互审与冲突处理",
+    level: 2,
+    parentId: "G0.5",
+    relation: "N5.3 · 必要条件",
+    owner: "审查 Agent",
+    status: "待实现",
+    problem: "单个 Agent 的错误没有独立检查，多个 Agent 的分歧也没有正式处理机制。",
+    objective: "对中风险推理和产物执行独立互审，并把分歧转成可处理问题。",
+    conditionSummary: "审查者与执行者独立，支持与反驳都有证据，无法收敛时自动升级",
+    children: [],
+  },
+  "G0.5.4": {
+    id: "G0.5.4",
+    title: "实现风险闸门与人类决策",
+    level: 2,
+    parentId: "G0.5",
+    relation: "N5.4 · 必要条件",
+    owner: "治理 Agent",
+    status: "待确认",
+    problem: "何时自动推进、互审或交给人决策尚无可执行策略。",
+    objective: "按权限、影响、可逆性、成本、证据和分歧程度决定推进方式。",
+    conditionSummary: "高影响、不可逆、越权和价值取舍事项不会被 Agent 自动执行，决策依据完整呈现",
+    children: [],
+  },
+  "G0.5.5": {
+    id: "G0.5.5",
+    title: "实现失败恢复、成本与运行观测",
+    level: 2,
+    parentId: "G0.5",
+    relation: "N5.5 · 必要条件",
+    owner: "Agent SRE",
+    status: "待实现",
+    problem: "模型超时、工具失败、循环执行、成本失控和脏写目前没有防护。",
+    objective: "让 Agent 运行可暂停、重试、回滚、限额和诊断。",
+    conditionSummary: "失败不会破坏正式图谱，循环和预算超限被阻断，运行日志足以定位问题",
+    children: [],
+  },
+  "G0.6.1": {
+    id: "G0.6.1",
+    title: "建立证据接入与可信度模型",
+    level: 2,
+    parentId: "G0.6",
+    relation: "N6.1 · 必要条件",
+    owner: "证据 Agent",
+    status: "待实现",
+    problem: "当前证据状态由 Goal 状态推测，没有真实文件、数据、日志或确认记录。",
+    objective: "接入多类证据并记录来源、时间、权限、完整性和可信度。",
+    conditionSummary: "证据内容可访问或可验证，过期、冲突、缺失和低可信证据被明确标记",
+    children: [],
+  },
+  "G0.6.2": {
+    id: "G0.6.2",
+    title: "实现验收规则与结果判断",
+    level: 2,
+    parentId: "G0.6",
+    relation: "N6.2 · 必要条件",
+    owner: "验收 Agent",
+    status: "待实现",
+    problem: "系统没有可执行验收标准，动作完成容易被误认为目标达成。",
+    objective: "把成功标准转成可计算或可人工判断的验收规则。",
+    conditionSummary: "每个 Goal 都有验收对象、规则、证据和判定者，动作完成与目标达成分别记录",
+    children: [],
+  },
+  "G0.6.3": {
+    id: "G0.6.3",
+    title: "实现 Review、Redo 与影响传播",
+    level: 2,
+    parentId: "G0.6",
+    relation: "N6.3 · 必要条件",
+    owner: "复盘 Agent",
+    status: "待实现",
+    problem: "当前 Redo 只生成新文案，不会使依赖旧推理的下游失效或重新执行。",
+    objective: "从错误结果回溯输入和推理，生成新版本并传播影响。",
+    conditionSummary: "Redo 前展示受影响对象，确认后旧结论保留历史但失效，相关下游进入待复核状态",
+    children: [],
+  },
+  "G0.6.4": {
+    id: "G0.6.4",
+    title: "形成组织级复盘与知识沉淀",
+    level: 2,
+    parentId: "G0.6",
+    relation: "N6.4 · 必要条件",
+    owner: "知识 Agent",
+    status: "待实现",
+    problem: "知识库仍是独立展示页，尚不能从图谱事实、决策和复盘自动派生知识。",
+    objective: "从已验收图谱生成可追溯的复盘、方法和阅读视图。",
+    conditionSummary: "派生内容可回链原图谱，事实更新后能提示过期，不形成第二套事实源",
+    children: [],
+  },
+  "G0.7.1": {
+    id: "G0.7.1",
+    title: "建立自动化测试与质量门",
+    level: 2,
+    parentId: "G0.7",
+    relation: "N7.1 · 必要条件",
+    owner: "质量工程",
+    status: "开发中",
+    problem: "当前只有 lint、类型检查和构建验证，缺少关键状态与用户流程的自动化测试。",
+    objective: "覆盖领域规则、组件交互、核心流程和回归风险。",
+    conditionSummary: "地图下钻、画布编辑、权限、并发、Agent 执行和 Review 回流均有自动化验证",
+    children: [],
+  },
+  "G0.7.2": {
+    id: "G0.7.2",
+    title: "建立发布、监控与故障响应",
+    level: 2,
+    parentId: "G0.7",
+    relation: "N7.2 · 必要条件",
+    owner: "平台工程",
+    status: "开发中",
+    problem: "已有本地构建与在线预览路径，但没有正式环境、指标、告警、备份和恢复演练。",
+    objective: "建立可重复发布、可观测运行和可恢复的数据保障。",
+    conditionSummary: "发布可回滚，错误和延迟可观测，图谱数据有备份且恢复流程经过演练",
+    children: [],
+  },
+  "G0.7.3": {
+    id: "G0.7.3",
+    title: "完成安全、隐私与提示注入防护",
+    level: 2,
+    parentId: "G0.7",
+    relation: "N7.3 · 必要条件",
+    owner: "安全工程",
+    status: "待实现",
+    problem: "材料接入和 Agent 工具调用会引入数据泄露、越权、提示注入和供应链风险。",
+    objective: "在数据、模型、工具和日志各层建立安全边界与处置机制。",
+    conditionSummary: "敏感数据不越权进入模型或日志，恶意材料不能改变系统权限，高风险工具调用可审计",
+    children: [],
+  },
+  "G0.7.4": {
+    id: "G0.7.4",
+    title: "用 WorkGraph 完成 WorkGraph 真实闭环",
+    level: 2,
+    parentId: "G0.7",
+    relation: "N7.4 · 验收条件",
+    owner: "全体项目成员",
+    status: "待验证",
+    problem: "产品定位主要来自推演，尚未证明团队能放弃平行待办并在图谱中持续完成真实建设。",
+    objective: "从本示例图谱选择一条真实需求，在系统内完成目标、推理、执行、证据、验收和复盘。",
+    conditionSummary: "至少一条需求不依赖平行事实源完成全流程，参与者能追溯每个决策并指出产品真实阻塞",
+    children: [],
+  },
+};
+
+const allGoalIds = Object.keys(goals);
+
+const canvasStages: { id: CanvasStage; label: string }[] = [
+  { id: "goal", label: "目标" },
+  { id: "conditions", label: "成立条件" },
+  { id: "path", label: "路线" },
+  { id: "execute", label: "执行" },
+  { id: "verify", label: "验收" },
 ];
 
-/* ── 主组件 ── */
+const workspaceViews: {
+  id: WorkspaceView;
+  label: string;
+  icon: typeof Map;
+}[] = [
+  { id: "map", label: "地图", icon: Map },
+  { id: "canvas", label: "画布", icon: PanelTop },
+  { id: "dependencies", label: "依赖", icon: GitBranch },
+  { id: "evidence", label: "证据", icon: FileCheck2 },
+  { id: "monitor", label: "监控", icon: Activity },
+  { id: "timeline", label: "时间线", icon: Clock3 },
+];
+
+const stageAgentMeta: Record<CanvasStage, { name: string; method: string }> = {
+  goal: { name: "目标澄清 Agent", method: "歧义检测、结果化改写、边界识别" },
+  conditions: { name: "成立条件 Agent", method: "反事实检验、失败模式分析、联合充分性审查" },
+  path: { name: "路径规划 Agent", method: "条件覆盖、依赖排序、能力匹配" },
+  execute: { name: "治理 Agent", method: "权限检查、风险分级、可逆性判断" },
+  verify: { name: "验收 Agent", method: "证据核验、偏差判断、影响传播" },
+};
+
+const methodLibrary: Record<CanvasStage, MethodDefinition[]> = {
+  goal: [
+    {
+      id: "smart",
+      name: "SMART",
+      summary: "检查目标是否具体、可衡量、可实现、相关且有时限。",
+      source: "George T. Doran, Management Review, 1981",
+      checks: ["具体", "可衡量", "可实现依据", "与上级相关", "有时限"],
+    },
+    {
+      id: "okr",
+      name: "OKR",
+      summary: "用定性 Objective 表达方向，用可衡量 Key Results 判断是否实现。",
+      source: "Google re:Work · Set goals with OKRs",
+      sourceUrl: "https://rework.withgoogle.com/guides/set-goals-with-okrs/steps/introduction/",
+      checks: ["目标有方向性", "结果可衡量", "结果而非任务", "数量保持聚焦"],
+    },
+    {
+      id: "goal-contract",
+      name: "目标契约",
+      summary: "适合探索性目标：明确期望变化、边界、负责人、证据与上级关系。",
+      source: "WorkGraph 产品方法 · 基于目标与验收约束组合",
+      checks: ["期望变化", "范围边界", "责任主体", "验收证据", "上级关系"],
+    },
+  ],
+  conditions: [
+    {
+      id: "counterfactual",
+      name: "反事实检验",
+      summary: "逐条删除候选条件，判断目标是否仍可能成立，从而识别必要条件。",
+      source: "必要条件逻辑检验",
+      checks: ["删除条件后目标失败", "条件不是具体方案", "条件之间不重复", "存在反例检查"],
+    },
+    {
+      id: "fmea",
+      name: "FMEA",
+      summary: "从潜在失败模式、原因和影响反推必须建立的条件与控制措施。",
+      source: "ASQ · Failure Mode and Effects Analysis",
+      sourceUrl: "https://asq.org/quality-resources/fmea",
+      checks: ["失败模式", "失败原因", "影响程度", "预防或检测措施"],
+    },
+  ],
+  path: [
+    {
+      id: "coverage",
+      name: "条件覆盖",
+      summary: "确保每条必要条件都有一个可验收产物或子 Goal 承担。",
+      source: "WorkGraph 条件覆盖模型",
+      checks: ["无遗漏条件", "无孤立子目标", "产物可独立验收", "父子关系明确"],
+    },
+    {
+      id: "wbs",
+      name: "WBS",
+      summary: "按可交付成果分解工作，并检查层级是否覆盖完整范围。",
+      source: "PMI · Work Breakdown Structure",
+      sourceUrl: "https://www.pmi.org/learning/library/work-breakdown-structure-basics-5919",
+      checks: ["按产物分解", "覆盖完整范围", "层级互不重叠", "叶子可执行"],
+    },
+  ],
+  execute: [
+    {
+      id: "raci",
+      name: "RACI",
+      summary: "明确负责、最终负责、咨询和知会角色，避免责任空白或多头负责。",
+      source: "责任分配矩阵（RACI）",
+      checks: ["唯一最终负责人", "执行负责人", "咨询对象", "知会对象"],
+    },
+    {
+      id: "risk-gate",
+      name: "风险闸门",
+      summary: "按权限、影响、可逆性和证据充分度决定自动推进、互审或人工决策。",
+      source: "WorkGraph 风险治理模型",
+      checks: ["权限内", "影响可控", "操作可逆", "证据充分"],
+    },
+  ],
+  verify: [
+    {
+      id: "vv",
+      name: "Verification / Validation",
+      summary: "分别检查产物是否按要求构建，以及它是否真正满足目标用途。",
+      source: "NASA Systems Engineering Handbook",
+      sourceUrl: "https://www.nasa.gov/wp-content/uploads/2018/09/nasa_systems_engineering_handbook_0.pdf",
+      checks: ["要求可验证", "产物符合要求", "满足真实用途", "证据可追溯"],
+    },
+    {
+      id: "review-redo",
+      name: "Review / Redo",
+      summary: "审查结果与推理；失败时定位错误起点并计算下游影响。",
+      source: "WorkGraph 回流模型",
+      checks: ["结果证据", "推理证据", "偏差起点", "下游影响"],
+    },
+  ],
+};
 
 export function GrandWorkGraph() {
-  const [selectedId, setSelectedId] = useState(goalNodes[0].id);
-  const selected = goalNodes.find((node) => node.id === selectedId) ?? goalNodes[0];
+  const persistedWorkspace = useMemo(loadWorkspace, []);
+  const [workspaceView, setWorkspaceView] = useState<WorkspaceView>("map");
+  const [focusedId, setFocusedId] = useState("G0");
+  const [selectedChildId, setSelectedChildId] = useState<string | null>(null);
+  const [reviewedGoals, setReviewedGoals] = useState<string[]>([]);
+  const [stageByGoal, setStageByGoal] = useState<Record<string, CanvasStage>>({});
+  const [drafts, setDrafts] = useState<StageDrafts>(persistedWorkspace.drafts);
+  const [agentRequests, setAgentRequests] = useState<StageDrafts>({});
+  const [agentSuggestions, setAgentSuggestions] = useState<StageDrafts>({});
+  const [agentProposals, setAgentProposals] = useState<Record<string, AgentProposal>>({});
+  const [agentErrors, setAgentErrors] = useState<StageDrafts>({});
+  const [agentLoadingKey, setAgentLoadingKey] = useState<string | null>(null);
+  const [confirmedDrafts, setConfirmedDrafts] = useState<string[]>(
+    persistedWorkspace.confirmedDrafts,
+  );
+  const [methodByStage, setMethodByStage] = useState<Record<string, string>>(
+    persistedWorkspace.methodByStage,
+  );
+  const [versions, setVersions] = useState<WorkspaceVersion[]>(
+    persistedWorkspace.versions,
+  );
+
+  const focused = goals[focusedId] ?? goals.G0;
+  const path = useMemo(() => getGoalPath(focused.id), [focused.id]);
+  const selectedChild = selectedChildId ? goals[selectedChildId] : null;
+  const reviewed = reviewedGoals.includes(focused.id);
+  const activeStage = stageByGoal[focused.id] ?? "goal";
+  const collaborationKey = `${focused.id}:${activeStage}`;
+  const availableMethods = methodLibrary[activeStage];
+  const selectedMethod =
+    availableMethods.find(
+      (method) => method.id === methodByStage[collaborationKey],
+    ) ?? availableMethods[0];
+  const draft = drafts[collaborationKey] ?? getInitialDraft(focused, activeStage);
+  const confirmed = confirmedDrafts.includes(collaborationKey);
+  const currentProposal = agentProposals[collaborationKey];
+  const latestVersion = [...versions]
+    .reverse()
+    .find((version) => version.key === collaborationKey);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      workspaceStorageKey,
+      JSON.stringify({ drafts, confirmedDrafts, methodByStage, versions }),
+    );
+  }, [confirmedDrafts, drafts, methodByStage, versions]);
+
+  const focusGoal = (id: string) => {
+    if (id !== focusedId) {
+      setStageByGoal((current) => ({ ...current, [id]: "goal" }));
+    }
+    setFocusedId(id);
+    setSelectedChildId(null);
+  };
+
+  const openGoalCanvas = (id: string) => {
+    focusGoal(id);
+    setWorkspaceView("canvas");
+  };
+
+  const openGoalCanvasAtStage = (id: string, stage: CanvasStage) => {
+    setFocusedId(id);
+    setSelectedChildId(null);
+    setStageByGoal((current) => ({ ...current, [id]: stage }));
+    setWorkspaceView("canvas");
+  };
+
+  const toggleReviewed = () => {
+    setReviewedGoals((current) =>
+      current.includes(focused.id)
+        ? current.filter((id) => id !== focused.id)
+        : [...current, focused.id],
+    );
+  };
+
+  const askAgent = async (instruction: string) => {
+    setAgentLoadingKey(collaborationKey);
+    setAgentErrors((current) => ({ ...current, [collaborationKey]: "" }));
+    try {
+      const parent = focused.parentId ? goals[focused.parentId] : undefined;
+      const proposal = await requestAgentProposal({
+        goal: {
+          id: focused.id,
+          title: focused.title,
+          problem: focused.problem,
+          objective: focused.objective,
+          acceptance: focused.conditionSummary,
+          parent: parent ? `${parent.id} ${parent.title}` : undefined,
+          children: focused.children.map((id) => ({
+            id,
+            title: goals[id].title,
+            relation: goals[id].relation,
+          })),
+        },
+        stage: canvasStages.find((stage) => stage.id === activeStage)?.label ?? activeStage,
+        method: {
+          name: selectedMethod.name,
+          summary: selectedMethod.summary,
+          checks: selectedMethod.checks,
+        },
+        currentDraft: draft,
+        instruction,
+      });
+      setAgentProposals((current) => ({ ...current, [collaborationKey]: proposal }));
+      setAgentSuggestions((current) => ({
+        ...current,
+        [collaborationKey]: proposal.proposedDraft,
+      }));
+    } catch (error) {
+      setAgentErrors((current) => ({
+        ...current,
+        [collaborationKey]:
+          error instanceof Error ? error.message : "Agent 请求失败",
+      }));
+    } finally {
+      setAgentLoadingKey(null);
+    }
+  };
+
+  const confirmDraft = () => {
+    const savedAt = new Date().toISOString();
+    setDrafts((current) => ({ ...current, [collaborationKey]: draft }));
+    setConfirmedDrafts((current) =>
+      current.includes(collaborationKey)
+        ? current
+        : [...current, collaborationKey],
+    );
+    setVersions((current) => [
+      ...current,
+      { key: collaborationKey, draft, savedAt },
+    ]);
+  };
 
   return (
-    <section className="grid gap-3">
-      <header className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Goal Workspace</p>
-            <h1 className="mt-1 text-xl font-semibold text-slate-950">目标节点工作台</h1>
-            <p className="mt-1 max-w-3xl text-sm text-slate-500">每个格子都是推理出来的，点击可查看逻辑链。</p>
+    <main className="flex min-h-[760px] flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm">
+      <CanvasToolbar
+        focused={focused}
+        onFocus={focusGoal}
+        path={path}
+      />
+
+      <section
+        aria-label={`工作图谱${workspaceViews.find((view) => view.id === workspaceView)?.label ?? ""}视图`}
+        className="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-4"
+        style={{
+          backgroundImage:
+            "radial-gradient(circle, rgba(100,116,139,.18) 1px, transparent 1px)",
+          backgroundSize: "20px 20px",
+        }}
+      >
+        <div className="flex min-w-[820px] items-start gap-3">
+          <div className="min-w-0 flex-1">
+            {workspaceView === "map" ? (
+              <GoalMapView
+                focused={focused}
+                onEnter={focusGoal}
+                onOpen={openGoalCanvas}
+              />
+            ) : null}
+            {workspaceView === "dependencies" ? (
+              <DependencyView
+                focused={focused}
+                onFocus={focusGoal}
+                onOpen={openGoalCanvas}
+              />
+            ) : null}
+            {workspaceView === "timeline" ? (
+              <TimelineView focused={focused} onOpen={openGoalCanvas} />
+            ) : null}
+            {workspaceView === "evidence" ? (
+              <EvidenceView
+                focusedId={focused.id}
+                onFocus={focusGoal}
+                onOpen={(id) => openGoalCanvasAtStage(id, "verify")}
+              />
+            ) : null}
+            {workspaceView === "monitor" ? (
+              <MonitorView
+                focusedId={focused.id}
+                onFocus={focusGoal}
+                onOpen={(id) => openGoalCanvasAtStage(id, "execute")}
+              />
+            ) : null}
+            {workspaceView === "canvas" ? (
+              <GoalCanvas
+              focused={focused}
+              activeStage={activeStage}
+              reviewed={reviewed}
+              selectedChildId={selectedChildId}
+              onStageChange={(stage) =>
+                setStageByGoal((current) => ({ ...current, [focused.id]: stage }))
+              }
+              agentRequest={agentRequests[collaborationKey] ?? ""}
+              agentSuggestion={agentSuggestions[collaborationKey] ?? ""}
+              agentError={agentErrors[collaborationKey] ?? ""}
+              agentLoading={agentLoadingKey === collaborationKey}
+              agentProposal={currentProposal}
+              availableMethods={availableMethods}
+              confirmed={confirmed}
+              draft={draft}
+              latestSavedAt={latestVersion?.savedAt}
+              selectedMethod={selectedMethod}
+              onAgentRequestChange={(value) =>
+                setAgentRequests((current) => ({ ...current, [collaborationKey]: value }))
+              }
+              onAskAgent={() =>
+                askAgent(
+                  agentRequests[collaborationKey] ||
+                    "请审查当前草稿，修正问题并补充缺失信息；不确定内容标记为待确认。",
+                )
+              }
+              onMethodChange={(methodId) => {
+                setMethodByStage((current) => ({
+                  ...current,
+                  [collaborationKey]: methodId,
+                }));
+                setAgentSuggestions((current) => ({ ...current, [collaborationKey]: "" }));
+                setAgentProposals((current) => {
+                  const next = { ...current };
+                  delete next[collaborationKey];
+                  return next;
+                });
+                setConfirmedDrafts((current) =>
+                  current.filter((key) => key !== collaborationKey),
+                );
+              }}
+              onApplySuggestion={() => {
+                const suggestion = agentSuggestions[collaborationKey];
+                if (!suggestion) return;
+                setDrafts((current) => ({ ...current, [collaborationKey]: suggestion }));
+                setConfirmedDrafts((current) =>
+                  current.filter((key) => key !== collaborationKey),
+                );
+              }}
+              onConfirmDraft={confirmDraft}
+              onDraftChange={(value) => {
+                setDrafts((current) => ({ ...current, [collaborationKey]: value }));
+                setConfirmedDrafts((current) =>
+                  current.filter((key) => key !== collaborationKey),
+                );
+              }}
+              onRedo={() => {
+                void askAgent("不要沿用上一版方案。换一种思路，重点检查遗漏、反例和不成立条件。");
+                setConfirmedDrafts((current) =>
+                  current.filter((key) => key !== collaborationKey),
+                );
+              }}
+              onReview={toggleReviewed}
+              onSelectChild={setSelectedChildId}
+              onZoom={openGoalCanvas}
+              />
+            ) : null}
           </div>
-          <div className="flex gap-2">
-            <button className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800">
-              <Plus className="h-4 w-4" />
-              新建子目标
-            </button>
-            <button className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50">
-              <RotateCcw className="h-4 w-4" />
-              发起 Review
-            </button>
-          </div>
+          <ViewRail activeView={workspaceView} onChange={setWorkspaceView} />
         </div>
-      </header>
+      </section>
 
-      <div className="grid gap-3 xl:grid-cols-[280px_minmax(0,1fr)]">
-        <GoalTree selectedId={selectedId} onSelect={setSelectedId} />
-        <GoalDetail key={selected.id} node={selected} />
-      </div>
-
-      <LogicExtractorPanel />
-    </section>
+      {workspaceView === "canvas" ? (
+        <CanvasSelection
+          focused={focused}
+          selected={selectedChild}
+          onClear={() => setSelectedChildId(null)}
+          onZoom={openGoalCanvas}
+        />
+      ) : (
+        <ViewStatusBar focused={focused} view={workspaceView} />
+      )}
+    </main>
   );
 }
 
-/* ── 左侧目标链路 ── */
-
-function GoalTree({ selectedId, onSelect }: { selectedId: string; onSelect: (id: string) => void }) {
+function CanvasToolbar({
+  focused,
+  onFocus,
+  path,
+}: {
+  focused: GoalNode;
+  onFocus: (id: string) => void;
+  path: GoalNode[];
+}) {
   return (
-    <aside className="rounded-lg border border-slate-200 bg-white">
-      <div className="flex items-center gap-2 border-b border-slate-200 px-3 py-2.5">
-        <GitBranch className="h-4 w-4 text-slate-500" />
-        <h2 className="text-sm font-semibold text-slate-900">目标链路</h2>
+    <header className="border-b border-slate-200 bg-white">
+      <div className="flex flex-wrap items-center gap-4 px-4 py-3">
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="grid h-8 w-8 place-items-center rounded-md bg-slate-950 text-cyan-300">
+            <Network className="h-4 w-4" />
+          </span>
+          <div>
+            <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-slate-400">Goal Directory</p>
+            <p className="text-xs font-semibold text-slate-900">目标目录</p>
+          </div>
+        </div>
+
+        <nav aria-label="当前目标层级" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+          {path.map((node, index) => (
+            <div className="flex items-center gap-1" key={node.id}>
+              {index > 0 ? <ChevronRight className="h-4 w-4 text-slate-300" /> : null}
+              <button
+                aria-current={node.id === focused.id ? "page" : undefined}
+                className={`rounded-md px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
+                  node.id === focused.id
+                    ? "bg-cyan-50 text-cyan-950 ring-1 ring-cyan-200"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-950"
+                }`}
+                onClick={() => onFocus(node.id)}
+                type="button"
+              >
+                <span className="block font-mono text-[8px] font-bold text-cyan-700">{node.id}</span>
+                <span className="block max-w-52 truncate text-xs font-semibold">{node.title}</span>
+              </button>
+            </div>
+          ))}
+        </nav>
+
+        <label className="relative">
+          <span className="sr-only">跳转到指定目标</span>
+          <select
+            className="h-9 max-w-72 appearance-none truncate rounded-md border border-slate-300 bg-white pl-3 pr-8 text-xs font-medium text-slate-700 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+            onChange={(event) => onFocus(event.target.value)}
+            value={focused.id}
+          >
+            {allGoalIds.map((id) => (
+              <option key={id} value={id}>
+                L{goals[id].level} · {id} · {goals[id].title}
+              </option>
+            ))}
+          </select>
+          <ChevronDown className="pointer-events-none absolute right-2.5 top-2.5 h-4 w-4 text-slate-400" />
+        </label>
       </div>
-      <p className="border-b border-slate-100 px-3 py-2 text-xs leading-5 text-slate-500">每一层都是 Goal Node。下级只是更细的一层目标。</p>
-      <div className="divide-y divide-slate-100">
-        {goalNodes.map((node, index) => {
-          const selected = selectedId === node.id;
+
+      <nav aria-label="当前目标的直接下级" className="flex min-w-0 items-center gap-2 overflow-x-auto border-t border-slate-100 bg-slate-50 px-4 py-2">
+        <span className="shrink-0 text-[9px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+          下一级
+        </span>
+        {focused.children.length > 0 ? (
+          focused.children.map((childId) => {
+            const child = goals[childId];
+            return (
+            <button
+              className="inline-flex min-h-8 shrink-0 items-center gap-2 rounded-md border border-slate-200 bg-white px-2.5 text-[10px] text-slate-600 transition hover:border-cyan-400 hover:text-cyan-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
+              key={child.id}
+              onClick={() => onFocus(child.id)}
+              type="button"
+            >
+              <span className="font-mono font-bold text-cyan-700">{child.id}</span>
+              <span className="font-semibold">{child.title}</span>
+              <ChevronRight className="h-3 w-3 text-slate-300" />
+            </button>
+            );
+          })
+        ) : (
+          <span className="text-[10px] text-slate-400">当前是叶子 Goal，没有直接下级</span>
+        )}
+      </nav>
+    </header>
+  );
+}
+
+function ViewRail({
+  activeView,
+  onChange,
+}: {
+  activeView: WorkspaceView;
+  onChange: (view: WorkspaceView) => void;
+}) {
+  return (
+    <aside className="sticky top-0 w-16 shrink-0 rounded-lg border border-slate-300 bg-white shadow-sm">
+      <p className="border-b border-slate-200 py-2 text-center text-[8px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+        视图
+      </p>
+      <nav aria-label="切换工作图谱视图" className="p-1">
+        {workspaceViews.map((view) => {
+          const Icon = view.icon;
+          const active = view.id === activeView;
           return (
             <button
-              className={`w-full px-3 py-2.5 text-left transition ${selected ? "bg-slate-100 text-slate-950" : "text-slate-700 hover:bg-slate-50"}`}
-              key={node.id}
-              onClick={() => onSelect(node.id)}
+              aria-label={`${view.label}视图`}
+              aria-pressed={active}
+              className={`flex h-12 w-14 flex-col items-center justify-center gap-1 rounded-md transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
+                active
+                  ? "bg-slate-950 text-white"
+                  : "text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+              }`}
+              key={view.id}
+              onClick={() => onChange(view.id)}
+              title={view.label}
+              type="button"
             >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{node.level}</p>
-                  <h3 className="mt-1 text-sm font-semibold">{node.title}</h3>
-                </div>
-                <span className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] font-medium text-slate-500">{node.status}</span>
-              </div>
-              <p className="mt-1 text-xs leading-5 text-slate-500">{node.owner}</p>
-              {index < goalNodes.length - 1 ? (
-                <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-400">
-                  <ArrowRight className="h-3.5 w-3.5" />
-                  拆解到下一层
-                </div>
-              ) : null}
+              <Icon className="h-4 w-4" />
+              <span className="text-[8px] font-semibold">{view.label}</span>
             </button>
           );
         })}
-      </div>
+      </nav>
     </aside>
   );
 }
 
-/* ── 右侧目标节点详情 ── */
+function GoalMapView({
+  focused,
+  onEnter,
+  onOpen,
+}: {
+  focused: GoalNode;
+  onEnter: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const firstLevel = focused.children.map((id) => goals[id]);
+  const attentionCount = allGoalIds.filter((id) =>
+    ["待确认", "待实现", "待验证"].includes(goals[id].status),
+  ).length;
+  const depth = Math.max(...allGoalIds.map((id) => goals[id].level)) + 1;
 
-function GoalDetail({ node }: { node: GoalNode }) {
   return (
-    <div className="grid gap-3">
-      <article className="rounded-lg border border-slate-200 bg-white px-4 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Current Goal Node</p>
-            <h2 className="mt-1 text-2xl font-semibold text-slate-950">{node.title}</h2>
-            <p className="mt-1 text-sm text-slate-500">负责人：{node.owner} · 状态：{node.status}</p>
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-[#f8faf9] shadow-sm">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 bg-white px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-700">
+            <Map className="h-3.5 w-3.5" />
+            Goal Map
           </div>
-          <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-600">{node.level}</span>
+          <h1 className="mt-1 text-lg font-semibold text-slate-950">
+            {focused.id} · {focused.title}
+          </h1>
+          <p className="mt-1 text-xs text-slate-500">
+            当前以此 Goal 为地图根节点。进入下一级仍留在地图，只有明确编辑时才切换画布。
+          </p>
         </div>
-
-        <div className="mt-3 grid gap-3 lg:grid-cols-2">
-          <ReasonedCell id="interpretation" label="目标解释" icon={Target} item={node.interpretation} />
-          <ReasonedCell id="target" label="目标值" icon={CheckCircle2} item={node.target} />
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 text-[10px] text-slate-500">
+            <span><strong className="text-slate-900">{allGoalIds.length}</strong> 个 Goal</span>
+            <span><strong className="text-amber-700">{attentionCount}</strong> 个需关注</span>
+            <span><strong className="text-cyan-700">{depth}</strong> 层深度</span>
+          </div>
+          <button
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
+            onClick={() => onOpen(focused.id)}
+            type="button"
+          >
+            <PanelTop className="h-3.5 w-3.5" />
+            编辑当前 Goal
+          </button>
         </div>
-      </article>
+      </header>
 
-      <div className="grid gap-3 lg:grid-cols-3">
-        <ReasonedList id="assumptions" label="假设" icon={BrainCircuit} items={node.assumptions} />
-        <ReasonedList id="constraints" label="约束" icon={ShieldCheck} items={node.constraints} />
-        <ReasonedList id="successCriteria" label="成功标准" icon={CheckCircle2} items={node.successCriteria} />
-      </div>
-
-      <GoalReasoning reasoning={node.reasoning} />
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        <ReasonedWorkList id="child" label="下级目标节点" items={node.children} />
-        <ReasonedWorkList id="action" label="行动" items={node.actions} />
-      </div>
-    </div>
-  );
-}
-
-/* ── 可展开推理的格子组件 ── */
-
-function ReasonedCell({
-  id,
-  label,
-  icon: Icon,
-  item,
-}: {
-  id: string;
-  label: string;
-  icon: typeof Target;
-  item: ReasonedItem;
-}) {
-  const [expandedId, setExpandedId] = useExpanded();
-  const open = expandedId === id;
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <button
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-slate-50"
-        onClick={() => setExpandedId(open ? null : id)}
-      >
-        <div className="grid h-6 w-6 shrink-0 place-items-center rounded bg-slate-100 text-slate-500">
-          <Icon className="h-4 w-4" />
-        </div>
-        <h3 className="flex-1 text-sm font-semibold text-slate-900">{label}</h3>
-        <BrainCircuit className="h-3.5 w-3.5 text-slate-300" />
-      </button>
-      <div className="px-3 pb-2">
-        <p className="text-sm leading-6 text-slate-600">{item.text}</p>
-      </div>
-      {open && <ReasoningExpanded reasoning={item.reasoning} />}
-    </section>
-  );
-}
-
-function ReasonedList({
-  id,
-  label,
-  icon: Icon,
-  items,
-}: {
-  id: string;
-  label: string;
-  icon: typeof Target;
-  items: ReasonedItem[];
-}) {
-  const [expandedId, setExpandedId] = useExpanded();
-
-  return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <div className="flex items-center gap-2 border-b border-slate-100 px-3 py-2">
-        <div className="grid h-6 w-6 shrink-0 place-items-center rounded bg-slate-100 text-slate-500">
-          <Icon className="h-4 w-4" />
-        </div>
-        <h3 className="text-sm font-semibold text-slate-900">{label}</h3>
-        <span className="text-[11px] text-slate-400">{items.length} 条</span>
-      </div>
-      <div>
-        {items.map((item, i) => {
-          const cellId = `${id}-${i}`;
-          const open = expandedId === cellId;
-          return (
-            <div className="border-b border-slate-50 last:border-b-0" key={i}>
-              <button
-                className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-slate-50"
-                onClick={() => setExpandedId(open ? null : cellId)}
-              >
-                <span className="mt-0.5 text-xs font-medium text-slate-300">{i + 1}.</span>
-                <span className="flex-1 text-sm leading-6 text-slate-600">{item.text}</span>
-                <BrainCircuit className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300" />
-              </button>
-              {open && <ReasoningExpanded reasoning={item.reasoning} />}
+      <div className="overflow-x-auto px-5 py-6">
+        <div className="mx-auto min-w-[1180px] max-w-[1500px]">
+          <div className="grid grid-cols-[72px_1fr] gap-4">
+            <MapLaneLabel label={`L${focused.level}`} detail="当前层" />
+            <div className="flex justify-center">
+              <MapGoalNode
+                focused
+                goal={focused}
+                onEnter={onEnter}
+                onOpen={onOpen}
+                root
+              />
             </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
 
-function ReasonedWorkList({
-  id,
-  label,
-  items,
-}: {
-  id: string;
-  label: string;
-  items: WorkItem[];
-}) {
-  const [expandedId, setExpandedId] = useExpanded();
-
-  return (
-    <article className="rounded-lg border border-slate-200 bg-white">
-      <h3 className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-900">{label}</h3>
-      <div>
-        {items.map((item, i) => {
-          const cellId = `${id}-${i}`;
-          const open = expandedId === cellId;
-          return (
-            <div className="border-b border-slate-50 last:border-b-0" key={i}>
-              <button
-                className="flex w-full items-start justify-between gap-3 px-3 py-2.5 text-left hover:bg-slate-50"
-                onClick={() => setExpandedId(open ? null : cellId)}
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-medium text-slate-900">{item.title}</h4>
-                    <BrainCircuit className="h-3.5 w-3.5 shrink-0 text-slate-300" />
-                  </div>
-                  <p className="mt-0.5 text-xs text-slate-500">{item.owner}</p>
-                </div>
-                <span
-                  className={`rounded border px-1.5 py-0.5 text-[11px] font-medium ${
-                    item.status.includes("待")
-                      ? "border-amber-200 bg-amber-50 text-amber-700"
-                      : "border-slate-200 bg-slate-50 text-slate-500"
-                  }`}
+            <MapLaneLabel label={`L${focused.level + 1}`} detail="直接下级" />
+            {firstLevel.length > 0 ? (
+              <div className="relative pt-12">
+                <div className="absolute left-[10%] right-[10%] top-5 h-px bg-slate-400" />
+                <div className="absolute left-1/2 top-0 h-5 w-px bg-slate-400" />
+                <div
+                  className="grid gap-3"
+                  style={{ gridTemplateColumns: `repeat(${firstLevel.length}, minmax(190px, 1fr))` }}
                 >
-                  {item.status}
-                </span>
-              </button>
-              {open && (
-                <div className="border-t border-slate-100">
-                  <ReasoningExpanded reasoning={item.reasoning} />
-                  {item.status.includes("待") && (
-                    <div className="flex gap-2 border-t border-slate-100 px-3 py-2">
-                      <button className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-800">
-                        <Check className="h-4 w-4" />
-                        确认
-                      </button>
-                      <button className="inline-flex items-center justify-center gap-1.5 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">
-                        <RotateCcw className="h-4 w-4" />
-                        Review
-                      </button>
+                  {firstLevel.map((goal) => (
+                    <div className="relative pt-4" key={goal.id}>
+                      <div className="absolute left-1/2 top-0 h-4 w-px bg-slate-400" />
+                      <MapRelationLabel label={goal.relation ?? "支撑"} />
+                      <MapGoalNode
+                        focused={false}
+                        goal={goal}
+                        onEnter={onEnter}
+                        onOpen={onOpen}
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="grid min-h-32 place-items-center rounded-lg border border-dashed border-slate-300 bg-white/60">
+                <div className="text-center">
+                  <CircleDot className="mx-auto h-5 w-5 text-slate-300" />
+                  <p className="mt-2 text-xs font-semibold text-slate-600">当前是叶子 Goal</p>
+                  <p className="mt-1 text-[10px] text-slate-400">可以编辑执行，也可以继续推导下一级</p>
+                </div>
+              </div>
+            )}
+
+            <MapLaneLabel label={`L${focused.level + 2}`} detail="下级预览" />
+            <div
+              className="grid gap-3 border-t border-dashed border-slate-300 pt-6"
+              style={{ gridTemplateColumns: `repeat(${Math.max(firstLevel.length, 1)}, minmax(190px, 1fr))` }}
+            >
+              {firstLevel.length > 0 ? firstLevel.map((parent) => (
+                <div className="relative" key={parent.id}>
+                  {parent.children.length > 0 ? (
+                    <div className="space-y-3">
+                      {parent.children.map((childId, index) => {
+                        const child = goals[childId];
+                        return (
+                          <div className="relative pl-4" key={child.id}>
+                            <div
+                              className={`absolute left-0 top-0 w-px bg-slate-300 ${
+                                index === parent.children.length - 1 ? "h-1/2" : "h-[calc(100%+12px)]"
+                              }`}
+                            />
+                            <div className="absolute left-0 top-1/2 h-px w-4 bg-slate-300" />
+                            <MapRelationLabel label={child.relation ?? "支撑"} compact />
+                            <MapGoalNode
+                              focused={false}
+                              goal={child}
+                              onEnter={onEnter}
+                              onOpen={onOpen}
+                              small
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="grid min-h-28 place-items-center rounded-lg border border-dashed border-slate-200 bg-white/50 text-[10px] text-slate-400">
+                      尚未展开下一层
                     </div>
                   )}
                 </div>
+              )) : (
+                <div className="py-4 text-center text-[10px] text-slate-400">没有更深层级</div>
               )}
             </div>
-          );
-        })}
+          </div>
+        </div>
       </div>
-    </article>
+    </section>
   );
 }
 
-/* ── 推理展开面板 ── */
-
-function ReasoningExpanded({ reasoning }: { reasoning: ReasoningTrace }) {
-  const [showRedoImpact, setShowRedoImpact] = useState(false);
-
+function MapLaneLabel({ detail, label }: { detail: string; label: string }) {
   return (
-    <div className="border-t border-slate-100 bg-slate-50 px-3 py-2">
-      <div className="grid gap-px bg-slate-200 lg:grid-cols-3">
-        <ReasoningColumn title="输入 x" items={reasoning.input} />
-        <ReasoningColumn title="逻辑 f(x)" items={reasoning.logic} />
-        <ReasoningColumn title="产物 y" items={reasoning.output} />
-      </div>
-      <div className="mt-2 flex flex-wrap items-center gap-2">
-        <button className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100">
-          Review
-        </button>
-        <button
-          className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-800"
-          onClick={() => setShowRedoImpact(!showRedoImpact)}
-        >
-          Redo
-        </button>
-      </div>
-      {showRedoImpact && reasoning.redoImpact && reasoning.redoImpact.length > 0 && (
-        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2">
-          <div className="flex items-center gap-1.5">
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
-            <span className="text-xs font-semibold text-amber-800">Redo 影响范围</span>
-          </div>
-          <p className="mt-1 text-xs leading-5 text-amber-700">重新推理后，以下内容可能发生变化：</p>
-          <ul className="mt-1.5 space-y-0.5">
-            {reasoning.redoImpact.map((impact, i) => (
-              <li className="text-xs leading-5 text-amber-700" key={i}>
-                · {impact}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
+    <div className="border-r border-slate-200 pr-3 pt-2 text-right">
+      <p className="font-mono text-xs font-bold text-slate-800">{label}</p>
+      <p className="mt-1 text-[9px] text-slate-400">{detail}</p>
     </div>
   );
 }
 
-/* ── Goal 级别推理面板 ── */
-
-function GoalReasoning({ reasoning }: { reasoning: ReasoningTrace }) {
+function MapRelationLabel({
+  compact = false,
+  label,
+}: {
+  compact?: boolean;
+  label: string;
+}) {
   return (
-    <article className="rounded-lg border border-slate-200 bg-white">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-3 py-2.5">
-        <div className="flex items-center gap-2">
-          <BrainCircuit className="h-4 w-4 text-slate-500" />
-          <h3 className="text-sm font-semibold text-slate-900">本次推理</h3>
-          <span className="text-[11px] text-slate-400">Goal 级别</span>
-        </div>
-        <div className="flex gap-2">
-          <button className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">Review</button>
-          <button className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-800">Redo</button>
-        </div>
-      </div>
+    <span
+      className={`mb-1.5 inline-flex rounded border border-cyan-200 bg-cyan-50 font-semibold text-cyan-800 ${
+        compact ? "px-1.5 py-0.5 text-[8px]" : "px-2 py-1 text-[9px]"
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
 
-      <div className="grid gap-px bg-slate-200 lg:grid-cols-3">
-        <ReasoningColumn title="输入 x" items={reasoning.input} />
-        <ReasoningColumn title="逻辑 f(x)" items={reasoning.logic} />
-        <ReasoningColumn title="产物 y" items={reasoning.output} />
+function MapGoalNode({
+  focused,
+  goal,
+  onEnter,
+  onOpen,
+  root = false,
+  small = false,
+}: {
+  focused: boolean;
+  goal: GoalNode;
+  onEnter: (id: string) => void;
+  onOpen: (id: string) => void;
+  root?: boolean;
+  small?: boolean;
+}) {
+  return (
+    <article
+      className={`group relative overflow-hidden rounded-lg border bg-white transition ${
+        focused
+          ? "border-cyan-600 shadow-[0_0_0_3px_rgba(8,145,178,.14)]"
+          : "border-slate-300 hover:border-slate-500 hover:shadow-md"
+      } ${root ? "w-[360px]" : "w-full"} ${small ? "min-h-28" : "min-h-36"}`}
+    >
+      <button
+        className="block w-full p-3 text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-cyan-600"
+        onClick={() => onEnter(goal.id)}
+        type="button"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[9px] font-bold text-cyan-700">{goal.id}</span>
+          <GoalStatus status={goal.status} />
+        </div>
+        <h2 className={`mt-2 font-semibold leading-5 text-slate-950 ${root ? "text-base" : "text-xs"}`}>
+          {goal.title}
+        </h2>
+        <p className={`mt-1.5 text-slate-500 ${small ? "line-clamp-2 text-[9px] leading-4" : "line-clamp-3 text-[10px] leading-4"}`}>
+          <span className="font-semibold text-rose-700">问题 · </span>
+          {goal.problem}
+        </p>
+      </button>
+      <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
+        <span className="truncate text-[9px] text-slate-400">{goal.owner}</span>
+        <div className="flex items-center gap-2">
+          {!root ? (
+            <button
+              className="inline-flex items-center gap-1 text-[9px] font-semibold text-cyan-700 hover:text-cyan-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
+              onClick={() => onEnter(goal.id)}
+              type="button"
+            >
+              进入此层
+              <ArrowRight className="h-3 w-3" />
+            </button>
+          ) : (
+            <span className="text-[9px] font-semibold text-cyan-700">当前层</span>
+          )}
+          <button
+            aria-label={`编辑${goal.title}`}
+            className="grid h-6 w-6 place-items-center rounded border border-slate-200 text-slate-400 hover:border-cyan-400 hover:text-cyan-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
+            onClick={() => onOpen(goal.id)}
+            title="编辑 Goal"
+            type="button"
+          >
+            <PanelTop className="h-3 w-3" />
+          </button>
+        </div>
       </div>
     </article>
   );
 }
 
-/* ── 推理列：每个节点可展开逻辑链 ── */
+function GoalStatus({ status }: { status: string }) {
+  const tone =
+    status === "原型已实现"
+      ? "bg-emerald-100 text-emerald-700"
+      : status === "开发中"
+        ? "bg-blue-100 text-blue-700"
+      : status === "待确认"
+        ? "bg-amber-100 text-amber-800"
+        : status === "设计中"
+          ? "bg-cyan-100 text-cyan-800"
+          : status === "待验证"
+            ? "bg-violet-100 text-violet-700"
+          : "bg-slate-100 text-slate-500";
+  return <span className={`rounded px-1.5 py-0.5 text-[8px] font-semibold ${tone}`}>{status}</span>;
+}
 
-function ReasoningColumn({ title, items }: { title: string; items: LogicNode[] }) {
+function DependencyView({
+  focused,
+  onFocus,
+  onOpen,
+}: {
+  focused: GoalNode;
+  onFocus: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const parent = focused.parentId ? goals[focused.parentId] : null;
+  const children = focused.children.map((id) => goals[id]);
+
   return (
-    <section className="bg-white p-3">
-      <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-400">{title}</h4>
-      <div className="mt-2 space-y-2">
-        {items.map((node, i) => (
-          <ReasoningNode key={i} node={node} />
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <header className="border-b border-slate-200 px-5 py-4">
+        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-700">
+          <GitBranch className="h-3.5 w-3.5" />
+          Dependency
+        </div>
+        <h1 className="mt-1 text-lg font-semibold text-slate-950">当前 Goal 的上下游依赖</h1>
+        <p className="mt-1 text-xs text-slate-500">左侧解释它为什么存在，右侧展示它依赖哪些下级结果成立。</p>
+      </header>
+
+      <div className="grid min-h-[560px] grid-cols-[1fr_72px_1.2fr_72px_1.4fr] items-center gap-3 bg-slate-50 p-6">
+        <DependencyColumn label="上游目标">
+          {parent ? (
+            <DependencyNode goal={parent} onClick={onFocus} />
+          ) : (
+            <DependencyEmpty text="这是根目标，没有上游 Goal" />
+          )}
+          <DependencyFact label="来源关系" value={focused.relation ?? "组织根目标"} />
+        </DependencyColumn>
+
+        <DependencyArrow label="产生" />
+
+        <div className="rounded-xl border-2 border-slate-900 bg-slate-950 p-5 text-white shadow-xl">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[10px] text-cyan-300">{focused.id}</span>
+            <GoalStatus status={focused.status} />
+          </div>
+          <h2 className="mt-3 text-xl font-semibold">{focused.title}</h2>
+          <p className="mt-2 text-xs leading-5 text-slate-300">{focused.objective}</p>
+          <div className="mt-4 border-t border-slate-700 pt-3 text-[10px] text-slate-400">
+            成立判断：{focused.conditionSummary}
+          </div>
+          <button
+            className="mt-4 inline-flex min-h-9 items-center gap-1.5 rounded-md bg-cyan-300 px-3 text-xs font-semibold text-slate-950 hover:bg-cyan-200"
+            onClick={() => onOpen(focused.id)}
+            type="button"
+          >
+            在画布中处理
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+
+        <DependencyArrow label="依赖" />
+
+        <DependencyColumn label="直接下游">
+          {children.length > 0 ? (
+            children.map((child) => (
+              <div className="grid grid-cols-[90px_1fr] items-center gap-2" key={child.id}>
+                <span className="text-right text-[9px] font-semibold text-cyan-700">{child.relation}</span>
+                <DependencyNode goal={child} onClick={onFocus} />
+              </div>
+            ))
+          ) : (
+            <DependencyEmpty text="当前是叶子 Goal，下一步应进入执行或继续拆解" />
+          )}
+        </DependencyColumn>
+      </div>
+    </section>
+  );
+}
+
+function DependencyColumn({ children, label }: { children: React.ReactNode; label: string }) {
+  return (
+    <div>
+      <p className="mb-3 text-center text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+function DependencyNode({ goal, onClick }: { goal: GoalNode; onClick: (id: string) => void }) {
+  return (
+    <button
+      className="w-full rounded-lg border border-slate-300 bg-white p-3 text-left shadow-sm transition hover:border-cyan-500 hover:shadow-md"
+      onClick={() => onClick(goal.id)}
+      type="button"
+    >
+      <span className="font-mono text-[9px] font-bold text-cyan-700">{goal.id}</span>
+      <span className="ml-2 text-xs font-semibold text-slate-900">{goal.title}</span>
+    </button>
+  );
+}
+
+function DependencyFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border border-dashed border-slate-300 bg-white/70 p-3">
+      <p className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">{label}</p>
+      <p className="mt-1 text-xs text-slate-700">{value}</p>
+    </div>
+  );
+}
+
+function DependencyEmpty({ text }: { text: string }) {
+  return <div className="rounded-lg border border-dashed border-slate-300 bg-white/60 p-4 text-center text-[10px] leading-5 text-slate-400">{text}</div>;
+}
+
+function DependencyArrow({ label }: { label: string }) {
+  return (
+    <div className="text-center">
+      <p className="text-[9px] font-semibold text-slate-400">{label}</p>
+      <div className="mt-2 flex items-center">
+        <span className="h-px flex-1 bg-slate-400" />
+        <ArrowRight className="h-4 w-4 text-slate-500" />
+      </div>
+    </div>
+  );
+}
+
+function EvidenceView({
+  focusedId,
+  onFocus,
+  onOpen,
+}: {
+  focusedId: string;
+  onFocus: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
+            <FileCheck2 className="h-3.5 w-3.5" />
+            Evidence & Review
+          </div>
+          <h1 className="mt-1 text-lg font-semibold text-slate-950">证据覆盖与回流风险</h1>
+          <p className="mt-1 text-xs text-slate-500">区分“已经完成”与“已有证据证明完成”，并标出需要 Review 的节点。</p>
+        </div>
+        <div className="flex gap-2 text-[10px]">
+          <span className="rounded bg-emerald-50 px-2 py-1 text-emerald-700">1 个执行证据待核验</span>
+          <span className="rounded bg-amber-50 px-2 py-1 text-amber-800">2 个推理节点待审查</span>
+        </div>
+      </header>
+
+      <div className="grid grid-cols-[120px_minmax(220px,1fr)_minmax(240px,1.2fr)_120px_100px] border-b border-slate-200 bg-slate-50 px-4 py-2 text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+        <span>Goal</span>
+        <span>目标</span>
+        <span>预期证据</span>
+        <span>证据状态</span>
+        <span>操作</span>
+      </div>
+      <div className="divide-y divide-slate-100">
+        {allGoalIds.map((id) => {
+          const goal = goals[id];
+          const evidenceState =
+            goal.status === "原型已实现"
+              ? "原型证据"
+              : goal.status === "开发中" || goal.status === "待验证"
+              ? "待核验"
+              : goal.status === "待确认"
+                ? "待人确认"
+                : goal.status === "设计中"
+                  ? "推理待审"
+                  : "尚未产生";
+          const tone =
+            evidenceState === "原型证据"
+              ? "bg-emerald-50 text-emerald-700"
+              : evidenceState === "待核验"
+                ? "bg-violet-50 text-violet-700"
+              : evidenceState === "待人确认" || evidenceState === "推理待审"
+                ? "bg-amber-50 text-amber-800"
+                : "bg-slate-100 text-slate-500";
+
+          return (
+            <article
+              className={`grid min-h-14 grid-cols-[120px_minmax(220px,1fr)_minmax(240px,1.2fr)_120px_100px] items-center px-4 py-2 ${
+                focusedId === id ? "bg-cyan-50" : "bg-white hover:bg-slate-50"
+              }`}
+              key={id}
+            >
+              <button className="text-left font-mono text-[10px] font-bold text-cyan-700" onClick={() => onFocus(id)} type="button">
+                {id}
+              </button>
+              <div>
+                <p className="text-xs font-semibold text-slate-900">{goal.title}</p>
+                <p className="mt-0.5 text-[9px] text-slate-400">{goal.owner}</p>
+              </div>
+              <p className="pr-5 text-[10px] leading-4 text-slate-600">{goal.conditionSummary}</p>
+              <span className={`w-fit rounded px-2 py-1 text-[9px] font-semibold ${tone}`}>{evidenceState}</span>
+              <button
+                className="text-[10px] font-semibold text-cyan-700 hover:underline"
+                onClick={() => onOpen(id)}
+                type="button"
+              >
+                打开验收
+              </button>
+            </article>
+          );
+        })}
+      </div>
+      <footer className="border-t border-rose-100 bg-rose-50 px-4 py-3 text-[10px] text-rose-800">
+        “原型证据”只证明前端交互已出现，不代表后端、Agent、权限或真实验收能力已经完成。
+      </footer>
+    </section>
+  );
+}
+
+function MonitorView({
+  focusedId,
+  onFocus,
+  onOpen,
+}: {
+  focusedId: string;
+  onFocus: (id: string) => void;
+  onOpen: (id: string) => void;
+}) {
+  const lanes = [
+    { label: "原型已实现", statuses: ["原型已实现"], dotClass: "bg-emerald-500" },
+    { label: "设计与确认", statuses: ["设计中", "待确认"], dotClass: "bg-cyan-500" },
+    { label: "开发中", statuses: ["开发中"], dotClass: "bg-blue-500" },
+    { label: "待实现", statuses: ["待实现"], dotClass: "bg-slate-500" },
+    { label: "待验证", statuses: ["待验证"], dotClass: "bg-violet-500" },
+  ];
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <header className="flex flex-wrap items-end justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-700">
+            <Activity className="h-3.5 w-3.5" />
+            Agent Monitor
+          </div>
+          <h1 className="mt-1 text-lg font-semibold text-slate-950">Agent 执行监控</h1>
+          <p className="mt-1 text-xs text-slate-500">按运行状态聚合 Goal，快速定位停滞、执行和需要人介入的工作。</p>
+        </div>
+        <div className="flex items-center gap-2 text-[10px] text-slate-500">
+          <span className="h-2 w-2 rounded-full bg-emerald-500" />
+          原型状态流正常
+        </div>
+      </header>
+
+      <div className="grid min-h-[560px] grid-cols-5 gap-3 bg-slate-100 p-4">
+        {lanes.map((lane) => {
+          const laneGoals = allGoalIds
+            .map((id) => goals[id])
+            .filter((goal) => lane.statuses.includes(goal.status));
+          return (
+            <section className="rounded-lg border border-slate-200 bg-slate-50" key={lane.label}>
+              <header className="flex items-center justify-between border-b border-slate-200 px-3 py-2.5">
+                <div className="flex items-center gap-2">
+                  <span className={`h-2 w-2 rounded-full ${lane.dotClass}`} />
+                  <h2 className="text-xs font-semibold text-slate-800">{lane.label}</h2>
+                </div>
+                <span className="rounded bg-white px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{laneGoals.length}</span>
+              </header>
+              <div className="space-y-2 p-2">
+                {laneGoals.map((goal) => (
+                  <article
+                    className={`rounded-md border bg-white p-3 shadow-sm ${
+                      focusedId === goal.id ? "border-cyan-500 ring-2 ring-cyan-100" : "border-slate-200"
+                    }`}
+                    key={goal.id}
+                  >
+                    <button className="block w-full text-left" onClick={() => onFocus(goal.id)} type="button">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[9px] font-bold text-cyan-700">{goal.id}</span>
+                        <GoalStatus status={goal.status} />
+                      </div>
+                      <h3 className="mt-2 text-xs font-semibold leading-5 text-slate-900">{goal.title}</h3>
+                      <p className="mt-1 text-[9px] text-slate-400">{goal.owner}</p>
+                    </button>
+                    <button
+                      className="mt-3 inline-flex items-center gap-1 text-[9px] font-semibold text-cyan-700 hover:underline"
+                      onClick={() => onOpen(goal.id)}
+                      type="button"
+                    >
+                      查看工作现场
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </article>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function TimelineView({
+  focused,
+  onOpen,
+}: {
+  focused: GoalNode;
+  onOpen: (id: string) => void;
+}) {
+  const events = [
+    {
+      label: "目标",
+      title: `${focused.id} ${focused.title} 被提出`,
+      detail: focused.objective,
+      actor: focused.level === 0 ? "产品负责人" : "上级 Goal 推导",
+      state: "完成",
+    },
+    {
+      label: "成立条件",
+      title: "Agent 生成候选必要条件",
+      detail: focused.conditionSummary,
+      actor: "成立条件 Agent",
+      state: focused.status === "待启动" ? "待开始" : "完成",
+    },
+    {
+      label: "路线",
+      title: focused.children.length > 0 ? `生成 ${focused.children.length} 个直接子 Goal` : "尚未形成下级路线",
+      detail: focused.children.length > 0 ? focused.children.map((id) => goals[id].title).join("、") : "需判断可直接执行，还是继续拆解。",
+      actor: "路径规划 Agent",
+      state: focused.children.length > 0 ? "完成" : "待开始",
+    },
+    {
+      label: "执行",
+      title: `${focused.owner} 承接当前 Goal`,
+      detail: "在权限和风险边界内推进，异常事项升级处理。",
+      actor: focused.owner,
+      state: focused.status,
+    },
+    {
+      label: "验收",
+      title: "证据回流并更新父级支撑状态",
+      detail: focused.conditionSummary,
+      actor: "验收 Agent + 人类负责人",
+      state: focused.status === "待确认" ? "待处理" : "未到达",
+    },
+  ];
+
+  return (
+    <section className="overflow-hidden rounded-xl border border-slate-300 bg-white shadow-sm">
+      <header className="flex items-end justify-between gap-3 border-b border-slate-200 px-5 py-4">
+        <div>
+          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-700">
+            <Clock3 className="h-3.5 w-3.5" />
+            Timeline
+          </div>
+          <h1 className="mt-1 text-lg font-semibold text-slate-950">{focused.id} 的演进记录</h1>
+          <p className="mt-1 text-xs text-slate-500">这里呈现状态如何产生，不只记录最后结果。</p>
+        </div>
+        <button
+          className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-cyan-800"
+          onClick={() => onOpen(focused.id)}
+          type="button"
+        >
+          打开画布
+          <ArrowRight className="h-3.5 w-3.5" />
+        </button>
+      </header>
+
+      <div className="mx-auto max-w-4xl px-8 py-8">
+        {events.map((event, index) => (
+          <article className="relative grid grid-cols-[100px_28px_1fr] gap-4 pb-8 last:pb-0" key={event.label}>
+            <div className="pt-1 text-right">
+              <p className="text-xs font-semibold text-slate-800">{event.label}</p>
+              <p className="mt-1 text-[9px] text-slate-400">阶段 {index + 1}</p>
+            </div>
+            <div className="relative flex justify-center">
+              {index < events.length - 1 ? <div className="absolute bottom-[-32px] top-4 w-px bg-slate-300" /> : null}
+              <span className={`relative z-10 mt-1 h-3 w-3 rounded-full border-2 border-white ring-2 ${
+                event.state === "完成" ? "bg-emerald-500 ring-emerald-200" : "bg-slate-300 ring-slate-200"
+              }`} />
+            </div>
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold text-slate-950">{event.title}</h2>
+                <span className="rounded bg-white px-2 py-1 text-[9px] font-semibold text-slate-500">{event.state}</span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-slate-600">{event.detail}</p>
+              <p className="mt-3 text-[9px] text-slate-400">参与者：{event.actor}</p>
+            </div>
+          </article>
         ))}
       </div>
     </section>
   );
 }
 
-function ReasoningNode({ node }: { node: LogicNode }) {
-  const hasChain = node.chain && node.chain.length > 0;
-  const [open, setOpen] = useState(false);
-
+function ViewStatusBar({
+  focused,
+  view,
+}: {
+  focused: GoalNode;
+  view: WorkspaceView;
+}) {
+  const label = workspaceViews.find((item) => item.id === view)?.label ?? "";
   return (
-    <div>
-      <button
-        className={`group flex w-full items-start gap-1.5 text-left ${hasChain ? "cursor-pointer" : "cursor-default"}`}
-        onClick={() => hasChain && setOpen(!open)}
-      >
-        {hasChain && (
-          <ChevronRight
-            className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300 transition-transform ${open ? "rotate-90" : ""}`}
-          />
-        )}
-        <span className="text-sm leading-5 text-slate-600">{node.text}</span>
-      </button>
-      {open && hasChain && (
-        <div className="ml-4 mt-1.5">
-          <LogicChainView nodes={node.chain!} relationLabel={node.relationLabel} />
-        </div>
-      )}
-    </div>
+    <footer className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-2.5 text-[11px] text-slate-400">
+      <span>当前视图：{label}</span>
+      <span>当前焦点：{focused.id} · {focused.title}</span>
+    </footer>
   );
 }
 
-/* ── 逻辑链视图：A → B → C ── */
-
-/** 根据关系标签返回颜色 class */
-function relationColor(label: string): string {
-  if (label.startsWith("⇏")) return "text-red-600 bg-red-50 border-red-200";
-  if (label.startsWith("⇒")) return "text-purple-600 bg-purple-50 border-purple-200";
-  return "text-blue-600 bg-blue-50 border-blue-200";
-}
-
-function LogicChainNodeView({ node, hasArrow, relationLabel }: { node: LogicNode; hasArrow: boolean; relationLabel?: string }) {
-  const hasChain = node.chain && node.chain.length > 0;
-  const [open, setOpen] = useState(false);
+function GoalCanvas({
+  focused,
+  activeStage,
+  agentError,
+  agentLoading,
+  agentProposal,
+  agentRequest,
+  agentSuggestion,
+  availableMethods,
+  confirmed,
+  draft,
+  latestSavedAt,
+  selectedMethod,
+  reviewed,
+  selectedChildId,
+  onAgentRequestChange,
+  onApplySuggestion,
+  onAskAgent,
+  onConfirmDraft,
+  onDraftChange,
+  onMethodChange,
+  onRedo,
+  onReview,
+  onSelectChild,
+  onStageChange,
+  onZoom,
+}: {
+  focused: GoalNode;
+  activeStage: CanvasStage;
+  agentError: string;
+  agentLoading: boolean;
+  agentProposal?: AgentProposal;
+  agentRequest: string;
+  agentSuggestion: string;
+  availableMethods: MethodDefinition[];
+  confirmed: boolean;
+  draft: string;
+  latestSavedAt?: string;
+  selectedMethod: MethodDefinition;
+  reviewed: boolean;
+  selectedChildId: string | null;
+  onAgentRequestChange: (value: string) => void;
+  onApplySuggestion: () => void;
+  onAskAgent: () => void;
+  onConfirmDraft: () => void;
+  onDraftChange: (value: string) => void;
+  onMethodChange: (methodId: string) => void;
+  onRedo: () => void;
+  onReview: () => void;
+  onSelectChild: (id: string) => void;
+  onStageChange: (stage: CanvasStage) => void;
+  onZoom: (id: string) => void;
+}) {
+  const parent = focused.parentId ? goals[focused.parentId] : null;
+  const conditionsForGoal =
+    focused.children.length > 0
+      ? focused.children.map((childId, index) => {
+          const child = goals[childId];
+          return [
+            child.relation?.split(" · ")[0] ?? `N${index + 1}`,
+            child.title,
+          ];
+        })
+      : [
+          [`${focused.id}.N1`, focused.conditionSummary],
+          [`${focused.id}.N2`, "产物必须能为父目标提供可验证证据"],
+        ];
 
   return (
-    <div>
-      <div className="flex items-start gap-2">
-        <div className="flex w-5 shrink-0 flex-col items-center pt-1">
-          {hasArrow && relationLabel && (
-            <span className={`inline-block whitespace-nowrap rounded border px-1 py-px text-[10px] font-medium leading-normal ${relationColor(relationLabel)}`}>
-              {relationLabel}
-            </span>
-          )}
-          {hasArrow && !relationLabel && <ArrowRight className="h-3 w-3 text-slate-300" />}
-        </div>
-        <div className="min-w-0 flex-1">
-          <button
-            className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-left text-xs leading-5 transition ${
-              hasChain
-                ? "cursor-pointer border-slate-300 bg-white text-slate-700 hover:border-slate-400"
-                : "cursor-default border-slate-200 bg-slate-50 text-slate-600"
-            }`}
-            onClick={() => hasChain && setOpen(!open)}
-          >
-            {node.text}
-            {hasChain && (
-              <ChevronRight
-                className={`h-3 w-3 shrink-0 text-slate-300 transition-transform ${open ? "rotate-90" : ""}`}
-              />
-            )}
-          </button>
-          {open && hasChain && (
-            <div className="ml-5 mt-1.5 border-l-2 border-slate-100 pl-3">
-              <LogicChainView nodes={node.chain!} relationLabel={node.relationLabel} />
+    <article className="overflow-hidden rounded-xl border-2 border-slate-400 bg-white shadow-[0_18px_50px_rgba(15,23,42,.10)]">
+      <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-200 bg-slate-950 px-5 py-4 text-white">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-cyan-300 text-slate-950">
+            <Target className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+              <span>Goal Canvas</span>
+              <span>·</span>
+              <span>L{focused.level}</span>
+              <span>·</span>
+              <span>{focused.id}</span>
             </div>
-          )}
+            <h1 className="mt-1 text-xl font-semibold">{focused.title}</h1>
+            {parent ? (
+              <p className="mt-1 text-xs text-slate-400">
+                通过 <span className="font-semibold text-cyan-300">{focused.relation}</span> 支撑父目标 {parent.id}
+              </p>
+            ) : (
+              <p className="mt-1 text-xs text-slate-400">根目标 · 所有下级证据最终回流到此画布</p>
+            )}
+          </div>
         </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-[10px] text-slate-300">
+            {focused.owner}
+          </span>
+          <span className="rounded bg-cyan-300 px-2 py-1 text-[10px] font-semibold text-slate-950">
+            {focused.status}
+          </span>
+        </div>
+      </header>
+
+      <CanvasStageNav activeStage={activeStage} onChange={onStageChange} />
+
+      <section className="min-h-[360px] bg-white p-5">
+        <CanvasStageContent
+          activeStage={activeStage}
+          conditions={conditionsForGoal}
+          focused={focused}
+          onReview={onReview}
+          onSelectChild={onSelectChild}
+          onZoom={onZoom}
+          reviewed={reviewed}
+          selectedChildId={selectedChildId}
+        />
+        <CollaborationEditor
+          activeStage={activeStage}
+          agentError={agentError}
+          agentLoading={agentLoading}
+          agentProposal={agentProposal}
+          agentRequest={agentRequest}
+          agentSuggestion={agentSuggestion}
+          availableMethods={availableMethods}
+          confirmed={confirmed}
+          draft={draft}
+          focused={focused}
+          latestSavedAt={latestSavedAt}
+          selectedMethod={selectedMethod}
+          onAgentRequestChange={onAgentRequestChange}
+          onApplySuggestion={onApplySuggestion}
+          onAskAgent={onAskAgent}
+          onConfirm={onConfirmDraft}
+          onDraftChange={onDraftChange}
+          onMethodChange={onMethodChange}
+          onRedo={onRedo}
+        />
+      </section>
+
+      <ChildCanvasIndex
+        focused={focused}
+        onSelect={onSelectChild}
+        onZoom={onZoom}
+        selectedChildId={selectedChildId}
+      />
+    </article>
+  );
+}
+
+function CanvasStageNav({
+  activeStage,
+  onChange,
+}: {
+  activeStage: CanvasStage;
+  onChange: (stage: CanvasStage) => void;
+}) {
+  return (
+    <nav aria-label="当前目标工作阶段" className="grid border-b border-slate-200 bg-slate-50 sm:grid-cols-5">
+      {canvasStages.map((stage, index) => {
+        const active = stage.id === activeStage;
+        return (
+          <button
+            aria-current={active ? "step" : undefined}
+            className={`flex min-h-12 items-center gap-2 border-b border-slate-200 px-3 py-2 text-left transition last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 ${
+              active ? "bg-white text-slate-950" : "text-slate-400 hover:bg-white hover:text-slate-700"
+            }`}
+            key={stage.id}
+            onClick={() => onChange(stage.id)}
+            type="button"
+          >
+            <span className={`grid h-5 w-5 place-items-center rounded text-[10px] font-bold ${active ? "bg-cyan-700 text-white" : "bg-slate-200 text-slate-500"}`}>
+              {index + 1}
+            </span>
+            <span className="text-xs font-semibold">{stage.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+function CanvasStageContent({
+  activeStage,
+  conditions,
+  focused,
+  reviewed,
+  selectedChildId,
+  onReview,
+  onSelectChild,
+  onZoom,
+}: {
+  activeStage: CanvasStage;
+  conditions: string[][];
+  focused: GoalNode;
+  reviewed: boolean;
+  selectedChildId: string | null;
+  onReview: () => void;
+  onSelectChild: (id: string) => void;
+  onZoom: (id: string) => void;
+}) {
+  if (activeStage === "goal") {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <SectionLabel icon={Target} label="当前目标契约" />
+        <p className="mt-4 max-w-3xl text-xl font-semibold leading-8 text-slate-950">{focused.objective}</p>
+        <div className="mt-6 grid gap-5 sm:grid-cols-2">
+          <CanvasFact label="当前问题" value={focused.problem} />
+          <CanvasFact label="期望结果" value={focused.objective} />
+          <CanvasFact label="验收证据" value={focused.conditionSummary} />
+          <CanvasFact label="责任主体" value={focused.owner} />
+        </div>
+        <div className="mt-6 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-900">
+          当前需要审查：目标是否足够明确？范围、对象和验收证据是否仍有歧义？
+        </div>
+      </div>
+    );
+  }
+
+  if (activeStage === "conditions") {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <SectionLabel icon={Bot} label="成立条件" />
+            <p className="mt-2 text-sm text-slate-500">
+              从已确认的目标出发，推导缺少哪些条件会使目标无法成立。
+            </p>
+          </div>
+          <span className="text-[10px] text-slate-400">{conditions.length} 条当前推理</span>
+        </div>
+        <div className="mt-4 space-y-2">
+          {conditions.map(([id, condition], index) => (
+            <div className="grid items-center gap-3 rounded-md border border-slate-200 px-3 py-3 md:grid-cols-[44px_1fr_auto_1.3fr]" key={id}>
+              <span className="rounded bg-slate-100 px-1.5 py-1 text-center text-[10px] font-bold text-slate-600">{id}</span>
+              <span className="text-xs text-slate-500">{index === 0 ? "当前目标要成立" : "结果要能支撑父目标"}</span>
+              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-cyan-700">
+                则必须
+                <ArrowRight className="h-3 w-3" />
+              </span>
+              <span className="text-sm font-medium text-slate-800">{condition}</span>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 grid gap-2 text-[11px] sm:grid-cols-3">
+          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+            <strong className="text-slate-900">必要条件：</strong>
+            缺少任意一项，目标不能成立。
+          </p>
+          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+            <strong className="text-slate-900">联合充分假设：</strong>
+            当前假设这些条件合在一起足以支撑目标，仍需证据验证。
+          </p>
+          <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-600">
+            <strong className="text-slate-900">不是验收标准：</strong>
+            验收标准用于判断最终结果是否达标。
+          </p>
+        </div>
+        <button
+          className={`mt-5 inline-flex min-h-10 items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
+            reviewed
+              ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+              : "bg-slate-950 text-white hover:bg-cyan-800"
+          }`}
+          onClick={onReview}
+          type="button"
+        >
+          {reviewed ? <Check className="h-3.5 w-3.5" /> : <UserRound className="h-3.5 w-3.5" />}
+          {reviewed ? "本节点推理已确认" : "审查这些推理"}
+        </button>
+      </div>
+    );
+  }
+
+  if (activeStage === "path") {
+    return (
+      <div>
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <SectionLabel icon={Layers3} label="路线" />
+            <p className="mt-2 text-sm text-slate-500">只有在这一步，子 Goal 才作为主要产物展开。</p>
+          </div>
+          <span className="text-[10px] text-slate-400">{focused.children.length} 个直接子 Goal</span>
+        </div>
+        {focused.children.length > 0 ? (
+          <div className="mt-4 divide-y divide-slate-200 rounded-md border border-slate-200">
+            {focused.children.map((childId) => {
+              const child = goals[childId];
+              const selected = selectedChildId === childId;
+              return (
+                <div className={`grid items-center gap-3 px-3 py-3 md:grid-cols-[110px_minmax(0,1fr)_120px_100px] ${selected ? "bg-cyan-50" : ""}`} key={childId}>
+                  <span className="text-[10px] font-semibold text-cyan-700">{child.relation}</span>
+                  <button className="min-w-0 text-left" onClick={() => onSelectChild(childId)} type="button">
+                    <span className="block text-sm font-semibold text-slate-900">{child.id} · {child.title}</span>
+                    <span className="mt-0.5 block truncate text-[11px] text-slate-500">{child.objective}</span>
+                  </button>
+                  <span className="text-[10px] text-slate-500">{child.owner}</span>
+                  <button
+                    className="inline-flex min-h-8 items-center justify-center gap-1 rounded border border-slate-300 bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-700 hover:border-cyan-500 hover:text-cyan-800"
+                    onClick={() => onZoom(childId)}
+                    type="button"
+                  >
+                    <Maximize2 className="h-3 w-3" />
+                    进入画布
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyLeaf />
+        )}
+      </div>
+    );
+  }
+
+  if (activeStage === "execute") {
+    return (
+      <div className="mx-auto max-w-4xl">
+        <SectionLabel icon={Play} label="执行" />
+        <div className="mt-4 grid gap-px overflow-hidden rounded-md border border-slate-200 bg-slate-200 sm:grid-cols-3">
+          <CanvasFact label="执行主体" value={focused.owner} />
+          <CanvasFact label="当前状态" value={focused.status} />
+          <CanvasFact label="治理模式" value={focused.status === "待确认" ? "等待人类决策" : "权限内自动推进"} />
+        </div>
+        <div className="mt-5 flex items-start gap-3 rounded-md border border-slate-200 p-4">
+          <ShieldCheck className="mt-0.5 h-5 w-5 text-cyan-700" />
+          <div>
+            <p className="text-sm font-semibold text-slate-900">本节点的执行边界</p>
+            <p className="mt-1 text-xs leading-5 text-slate-500">
+              Agent 可以在已确认条件、预算和权限范围内推进；出现越权、不可逆或证据不足时暂停并升级。
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-4xl">
+      <SectionLabel icon={Check} label="验收" />
+      <div className="mt-4 grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+        <CanvasFact label="预期验收证据" value={focused.conditionSummary} />
+        <ArrowRight className="mx-auto h-5 w-5 text-slate-300" />
+        <CanvasFact label="验收后的系统动作" value="证据写回当前 Goal，并向父目标传播支撑状态" />
+      </div>
+      <div className="mt-5 rounded-md border border-amber-200 bg-amber-50 p-4 text-xs leading-5 text-amber-900">
+        如果证据否定了当前推理，系统会从本画布的成立条件推导重新开始，并标出所有受影响的子 Goal。
       </div>
     </div>
   );
 }
 
-function LogicChainView({ nodes, relationLabel }: { nodes: LogicNode[]; relationLabel?: string }) {
+function MethodPanel({
+  activeStage,
+  draft,
+  focused,
+  methods,
+  onChange,
+  selected,
+}: {
+  activeStage: CanvasStage;
+  draft: string;
+  focused: GoalNode;
+  methods: MethodDefinition[];
+  onChange: (methodId: string) => void;
+  selected: MethodDefinition;
+}) {
+  const checkResults = getMethodCheckResults(
+    focused,
+    activeStage,
+    selected,
+    draft,
+  );
+  const passedCount = checkResults.filter((result) => result.passed).length;
+
   return (
-    <div className="space-y-1.5">
-      {nodes.map((node, i) => (
-        <LogicChainNodeView key={i} node={node} hasArrow={i > 0} relationLabel={i > 0 ? relationLabel : undefined} />
-      ))}
+    <section className="mb-4 overflow-hidden rounded-lg border border-indigo-200 bg-indigo-50/50">
+      <div className="grid lg:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="border-b border-indigo-200 p-3 lg:border-b-0 lg:border-r">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.1em] text-indigo-500">
+            本步采用的方法
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5 lg:flex-col">
+            {methods.map((method) => (
+              <button
+                aria-pressed={method.id === selected.id}
+                className={`rounded-md px-2.5 py-2 text-left text-xs font-semibold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 ${
+                  method.id === selected.id
+                    ? "bg-indigo-700 text-white"
+                    : "bg-white text-slate-600 hover:bg-indigo-100 hover:text-indigo-900"
+                }`}
+                key={method.id}
+                onClick={() => onChange(method.id)}
+                type="button"
+              >
+                {method.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="p-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-2xl">
+              <p className="text-sm font-semibold text-slate-900">{selected.name}</p>
+              <p className="mt-1 text-xs leading-5 text-slate-600">{selected.summary}</p>
+              <p className="mt-1 text-[10px] text-slate-400">
+                来源：
+                {selected.sourceUrl ? (
+                  <a
+                    className="ml-1 text-indigo-700 underline-offset-2 hover:underline"
+                    href={selected.sourceUrl}
+                    rel="noreferrer"
+                    target="_blank"
+                  >
+                    {selected.source}
+                  </a>
+                ) : (
+                  <span className="ml-1">{selected.source}</span>
+                )}
+              </p>
+            </div>
+            <span className="rounded-md bg-white px-2.5 py-1.5 text-xs font-bold text-indigo-800">
+              当前通过 {passedCount}/{checkResults.length}
+            </span>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-2">
+            {checkResults.map((result) => (
+              <span
+                className={`inline-flex items-center gap-1 rounded border px-2 py-1 text-[10px] font-medium ${
+                  result.passed
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-amber-200 bg-amber-50 text-amber-800"
+                }`}
+                key={result.label}
+              >
+                {result.passed ? <Check className="h-3 w-3" /> : <CircleDot className="h-3 w-3" />}
+                {result.label}
+                {!result.passed ? " · 待补" : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function CollaborationEditor({
+  activeStage,
+  agentError,
+  agentLoading,
+  agentProposal,
+  agentRequest,
+  agentSuggestion,
+  availableMethods,
+  confirmed,
+  draft,
+  focused,
+  latestSavedAt,
+  onAgentRequestChange,
+  onApplySuggestion,
+  onAskAgent,
+  onConfirm,
+  onDraftChange,
+  onMethodChange,
+  onRedo,
+  selectedMethod,
+}: {
+  activeStage: CanvasStage;
+  agentError: string;
+  agentLoading: boolean;
+  agentProposal?: AgentProposal;
+  agentRequest: string;
+  agentSuggestion: string;
+  availableMethods: MethodDefinition[];
+  confirmed: boolean;
+  draft: string;
+  focused: GoalNode;
+  latestSavedAt?: string;
+  onAgentRequestChange: (value: string) => void;
+  onApplySuggestion: () => void;
+  onAskAgent: () => void;
+  onConfirm: () => void;
+  onDraftChange: (value: string) => void;
+  onMethodChange: (methodId: string) => void;
+  onRedo: () => void;
+  selectedMethod: MethodDefinition;
+}) {
+  const meta = stageAgentMeta[activeStage];
+  const suggestion = agentSuggestion;
+
+  return (
+    <section className="mt-7 border-t border-slate-200 pt-5">
+      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold text-slate-900">你和 Agent 共同编辑这一步</p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            左侧是将写入图谱的草稿；右侧是 Agent 的演示建议与推理方法。
+          </p>
+        </div>
+        <span
+          className={`rounded px-2 py-1 text-[10px] font-semibold ${
+            confirmed
+              ? "bg-emerald-100 text-emerald-700"
+              : "bg-amber-100 text-amber-800"
+          }`}
+        >
+          {confirmed ? "当前阶段已确认" : "等待共同确认"}
+        </span>
+      </div>
+
+      <MethodPanel
+        activeStage={activeStage}
+        draft={draft}
+        focused={focused}
+        methods={availableMethods}
+        onChange={onMethodChange}
+        selected={selectedMethod}
+      />
+
+      <div className="grid overflow-hidden rounded-lg border border-slate-300 lg:grid-cols-[minmax(0,1.2fr)_minmax(300px,.8fr)]">
+        <div className="border-b border-slate-200 bg-white p-4 lg:border-b-0 lg:border-r">
+          <label
+            className="text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-500"
+            htmlFor={`draft-${focused.id}-${activeStage}`}
+          >
+            共同草稿 · 可直接编辑
+          </label>
+          <textarea
+            className="mt-2 min-h-40 w-full resize-y rounded-md border border-slate-300 bg-white p-3 text-sm leading-6 text-slate-800 outline-none transition focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+            id={`draft-${focused.id}-${activeStage}`}
+            onChange={(event) => onDraftChange(event.target.value)}
+            value={draft}
+          />
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-[10px] text-slate-400">
+              {latestSavedAt
+                ? `已保存在此浏览器 · ${new Date(latestSavedAt).toLocaleString("zh-CN")}`
+                : "草稿会自动保存在此浏览器；确认后生成一个本地版本。"}
+            </p>
+            <button
+              className={`inline-flex min-h-9 items-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
+                confirmed
+                  ? "border border-emerald-200 bg-emerald-50 text-emerald-700"
+                  : "bg-slate-950 text-white hover:bg-cyan-800"
+              }`}
+              onClick={onConfirm}
+              type="button"
+            >
+              <Check className="h-3.5 w-3.5" />
+              {confirmed ? "已写入当前 Goal" : "确认并写入图谱"}
+            </button>
+          </div>
+        </div>
+
+        <aside className="bg-cyan-50/60 p-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-cyan-700 text-white">
+              <Bot className="h-4 w-4" />
+            </span>
+            <div>
+              <p className="text-xs font-semibold text-cyan-950">{meta.name}</p>
+              <p className="mt-0.5 text-[10px] leading-4 text-cyan-700">
+                当前采用：{selectedMethod.name} · {meta.method}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-4 rounded-md border border-cyan-200 bg-white p-3">
+            <div className="flex items-center gap-1.5 text-[10px] font-semibold text-cyan-800">
+              <Sparkles className="h-3.5 w-3.5" />
+              {agentLoading ? "Agent 正在读取当前图谱" : "Agent 修改提案"}
+            </div>
+            {agentLoading ? (
+              <p className="mt-2 animate-pulse text-xs text-slate-500">
+                正在分析 Goal、父子关系、当前阶段与方法检查项……
+              </p>
+            ) : suggestion ? (
+              <>
+                <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap font-sans text-xs leading-5 text-slate-700">
+                  {suggestion}
+                </pre>
+                {agentProposal ? (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    <p className="text-[10px] font-semibold text-slate-500">修改理由</p>
+                    <p className="mt-1 text-[10px] leading-4 text-slate-600">{agentProposal.rationale}</p>
+                    {agentProposal.questions.length > 0 ? (
+                      <ul className="mt-2 space-y-1 text-[10px] leading-4 text-amber-800">
+                        {agentProposal.questions.map((question) => (
+                          <li key={question}>待确认 · {question}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    <p className="mt-2 text-[9px] text-slate-400">{agentProposal.provider}</p>
+                  </div>
+                ) : null}
+                <button
+                  className="mt-3 text-[11px] font-semibold text-cyan-800 underline-offset-4 hover:underline"
+                  onClick={onApplySuggestion}
+                  type="button"
+                >
+                  采用提案并预览草稿
+                </button>
+              </>
+            ) : (
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                输入要求后发送。Agent 只生成提案，不会直接修改已确认图谱。
+              </p>
+            )}
+          </div>
+
+          {agentError ? (
+            <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 p-2 text-[10px] leading-4 text-rose-700">
+              {agentError}
+            </p>
+          ) : null}
+
+          <label
+            className="mt-4 block text-[10px] font-semibold text-slate-600"
+            htmlFor={`agent-request-${focused.id}-${activeStage}`}
+          >
+            告诉 Agent 你想怎么调整
+          </label>
+          <div className="mt-1.5 flex gap-2">
+            <input
+              className="min-w-0 flex-1 rounded-md border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              id={`agent-request-${focused.id}-${activeStage}`}
+              onChange={(event) => onAgentRequestChange(event.target.value)}
+              placeholder="例如：检查是否遗漏权限边界"
+              value={agentRequest}
+            />
+            <button
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-cyan-700 text-white hover:bg-cyan-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 disabled:cursor-wait disabled:opacity-50"
+              disabled={agentLoading}
+              onClick={onAskAgent}
+              title="让 Agent 重新建议"
+              type="button"
+            >
+              <Send className="h-3.5 w-3.5" />
+            </button>
+          </div>
+          <button
+            className="mt-3 inline-flex items-center gap-1.5 text-[11px] font-medium text-slate-500 hover:text-slate-900 disabled:cursor-wait disabled:opacity-50"
+            disabled={agentLoading}
+            onClick={onRedo}
+            type="button"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            不沿用当前思路，让 Agent 重做
+          </button>
+          <p className="mt-3 border-t border-cyan-200 pt-3 text-[9px] leading-4 text-cyan-700">
+            模型只能提交修改提案；采用提案后仍需人工确认，才会生成新的图谱版本。
+          </p>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function ChildCanvasIndex({
+  focused,
+  selectedChildId,
+  onSelect,
+  onZoom,
+}: {
+  focused: GoalNode;
+  selectedChildId: string | null;
+  onSelect: (id: string) => void;
+  onZoom: (id: string) => void;
+}) {
+  return (
+    <section className="border-t border-slate-200 bg-slate-50 px-4 py-3">
+      <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400">
+          <Layers3 className="h-3.5 w-3.5" />
+          子画布
+          <span>{focused.children.length}</span>
+        </div>
+        {focused.children.length > 0 ? (
+          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto pb-1">
+            {focused.children.map((childId) => {
+              const child = goals[childId];
+              const selected = selectedChildId === childId;
+              return (
+                <div className={`flex shrink-0 items-center overflow-hidden rounded-md border bg-white ${selected ? "border-cyan-500" : "border-slate-200"}`} key={childId}>
+                  <button
+                    className="flex min-h-9 items-center gap-2 px-2.5 text-left"
+                    onClick={() => onSelect(childId)}
+                    type="button"
+                  >
+                    <span className="text-[9px] font-bold text-cyan-700">{child.id}</span>
+                    <span className="max-w-36 truncate text-[11px] font-medium text-slate-700">{child.title}</span>
+                    <span className="text-[9px] text-slate-400">{child.relation?.split(" · ")[0]}</span>
+                  </button>
+                  <button
+                    aria-label={`进入${child.title}画布`}
+                    className="grid h-9 w-8 place-items-center border-l border-slate-200 text-slate-400 hover:bg-slate-50 hover:text-cyan-700"
+                    onClick={() => onZoom(childId)}
+                    type="button"
+                  >
+                    <Maximize2 className="h-3 w-3" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="text-[10px] text-slate-400">当前为叶子 Goal</p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function CanvasFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="bg-white p-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-slate-400">{label}</p>
+      <p className="mt-1.5 text-sm font-medium leading-6 text-slate-800">{value}</p>
     </div>
   );
 }
 
-/* ── 展开状态管理 ── */
-
-function useExpanded() {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  return [expandedId, setExpandedId] as const;
+function EmptyLeaf() {
+  return (
+    <div className="mt-4 grid min-h-40 place-items-center rounded-lg border border-dashed border-slate-300 bg-slate-50">
+      <div className="text-center">
+        <CircleDot className="mx-auto h-5 w-5 text-slate-300" />
+        <p className="mt-2 text-xs font-medium text-slate-500">当前是叶子 Goal</p>
+        <p className="mt-1 text-[10px] text-slate-400">如仍不可直接执行，需要先补充必要条件</p>
+      </div>
+    </div>
+  );
 }
 
-/* ── 逻辑提取引擎演示面板 ── */
-
-const DEMO_TEXT = [
-  "因为办公工具断裂，所以需要统一的协作平台。",
-  "当前办公以文档为中心，但文档无法被 Agent 直接执行和推理，因此办公系统应以可推理对象为中心。",
-  "首先分析用户需求，然后拆解为可执行的目标，接着分配给对应的 Agent 执行。",
-  "如果用户体验不好，那么用户就会流失。所以我们需要在设计阶段就引入用户测试。",
-  "聊天承载讨论，但状态不可追踪。文档承载说明，但不可执行。项目管理承载任务，但缺少决策上下文。因此，三个工具各管一段，链路断裂。",
-];
-
-function LogicExtractorPanel() {
-  const [input, setInput] = useState("");
-  const [result, setResult] = useState<LogicNode[] | null>(null);
-  const [expanded, setExpanded] = useState(false);
-
-  const handleExtract = () => {
-    if (!input.trim()) return;
-    setResult(extractLogicChain(input));
-  };
-
-  const handleDemo = (text: string) => {
-    setInput(text);
-    setResult(extractLogicChain(text));
-  };
+function CanvasSelection({
+  focused,
+  selected,
+  onClear,
+  onZoom,
+}: {
+  focused: GoalNode;
+  selected: GoalNode | null;
+  onClear: () => void;
+  onZoom: (id: string) => void;
+}) {
+  if (!selected) {
+    return (
+      <footer className="flex items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-2.5 text-[11px] text-slate-400">
+        <span>当前聚焦：{focused.id} · {focused.title}</span>
+        <span>单击子画布查看关系，放大进入其内部工作</span>
+      </footer>
+    );
+  }
 
   return (
-    <section className="rounded-lg border border-slate-200 bg-white">
-      <button
-        className="flex w-full items-center justify-between px-4 py-3 text-left"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-center gap-2">
-          <Wand2 className="h-4 w-4 text-amber-500" />
-          <h2 className="text-sm font-semibold text-slate-900">逻辑提取引擎</h2>
-          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500">原型</span>
-        </div>
-        <ChevronRight className={`h-4 w-4 text-slate-400 transition-transform ${expanded ? "rotate-90" : ""}`} />
+    <footer className="flex flex-wrap items-center gap-3 border-t border-cyan-200 bg-cyan-50 px-4 py-3">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <Focus className="h-4 w-4 shrink-0 text-cyan-700" />
+        <p className="truncate text-xs text-cyan-950">
+          <strong>{selected.id} {selected.title}</strong>
+          <span className="mx-2 text-cyan-400">通过</span>
+          <strong>{selected.relation}</strong>
+          <span className="mx-2 text-cyan-400">支撑</span>
+          {focused.id} {focused.title}
+        </p>
+      </div>
+      <button className="text-xs text-cyan-700 hover:underline" onClick={onClear} type="button">
+        取消选择
       </button>
-
-      {expanded && (
-        <div className="border-t border-slate-200 px-4 py-3">
-          <p className="mb-3 text-xs leading-5 text-slate-500">
-            输入一段中文自然语言，引擎自动识别逻辑连词（因为…所以、如果…那么、虽然…但是等），提取为 A → B → C 的逻辑链。
-            <br />
-            这是 WorkGraph 的底层能力：任意文本先解析出逻辑结构，再基于逻辑结构进行推理和拆解。
-          </p>
-
-          {/* 示例按钮 */}
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            <span className="text-[11px] text-slate-400">试试：</span>
-            {DEMO_TEXT.map((t, i) => (
-              <button
-                key={i}
-                className="rounded border border-slate-200 px-2 py-0.5 text-[11px] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-                onClick={() => handleDemo(t)}
-              >
-                {t.length > 28 ? t.slice(0, 28) + "…" : t}
-              </button>
-            ))}
-          </div>
-
-          {/* 输入区 */}
-          <div className="flex gap-2">
-            <textarea
-              className="min-h-[60px] flex-1 resize-none rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-500 focus:outline-none"
-              placeholder="输入一段中文文本，例如：因为办公工具断裂，所以需要统一的协作平台。"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  handleExtract();
-                }
-              }}
-            />
-            <button
-              className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-50"
-              onClick={handleExtract}
-              disabled={!input.trim()}
-            >
-              <Wand2 className="h-4 w-4" />
-              提取逻辑
-            </button>
-          </div>
-
-          {/* 结果区 */}
-          {result && result.length > 0 && (
-            <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">提取结果</span>
-                <button
-                  className="inline-flex items-center gap-1 text-[11px] text-slate-400 transition hover:text-slate-600"
-                  onClick={() => {
-                    setInput("");
-                    setResult(null);
-                  }}
-                >
-                  <RefreshCw className="h-3 w-3" />
-                  清除
-                </button>
-              </div>
-
-              <div className="space-y-2">
-                {result.map((node, i) => {
-                  const hasChain = node.chain && node.chain.length > 0;
-                  return (
-                    <div key={i} className="rounded border border-slate-200 bg-white p-2">
-                      <div className="mb-1 flex items-center gap-2">
-                        <p className="text-xs font-medium text-slate-700">{node.text}</p>
-                        {node.relationLabel && (
-                          <span className={`inline-block whitespace-nowrap rounded border px-1 py-px text-[10px] font-medium leading-normal ${relationColor(node.relationLabel)}`}>
-                            {node.relationLabel}
-                          </span>
-                        )}
-                      </div>
-                      {hasChain && (
-                        <div className="border-l-2 border-amber-200 pl-3">
-                          <LogicChainView nodes={node.chain!} relationLabel={node.relationLabel} />
-                        </div>
-                      )}
-                      {!hasChain && (
-                        <p className="text-[11px] text-slate-400">（无逻辑连接词，作为原子节点）</p>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </section>
+      <button
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-md bg-slate-950 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-800"
+        onClick={() => onZoom(selected.id)}
+        type="button"
+      >
+        <Maximize2 className="h-3.5 w-3.5" />
+        进入这个画布
+      </button>
+    </footer>
   );
+}
+
+function SectionLabel({
+  icon: Icon,
+  label,
+}: {
+  icon: typeof Target;
+  label: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+      <Icon className="h-3.5 w-3.5 text-cyan-700" />
+      {label}
+    </div>
+  );
+}
+
+function getGoalPath(goalId: string): GoalNode[] {
+  const path: GoalNode[] = [];
+  let current: GoalNode | undefined = goals[goalId];
+
+  while (current) {
+    path.unshift(current);
+    current = current.parentId ? goals[current.parentId] : undefined;
+  }
+
+  return path;
+}
+
+function getInitialDraft(goal: GoalNode, stage: CanvasStage): string {
+  const parent = goal.parentId ? goals[goal.parentId] : null;
+
+  if (stage === "goal") {
+    return [
+      `目标：${goal.title}`,
+      `当前问题：${goal.problem}`,
+      `期望结果：${goal.objective}`,
+      `范围边界：由 ${goal.owner} 负责，${parent ? `通过“${goal.relation}”支撑 ${parent.id} ${parent.title}` : "作为根目标统领所有下级工作"}`,
+      `验收证据：${goal.conditionSummary}`,
+      "量化指标：待补充",
+      "可实现依据：待补充",
+      "截止时间：待补充",
+    ].join("\n");
+  }
+
+  if (stage === "conditions") {
+    return [
+      `输入目标：${goal.title}`,
+      `必要条件 1：${goal.conditionSummary}`,
+      `必要条件 2：产物必须能为${parent ? `父目标 ${parent.id}` : "根目标"}提供可验证证据`,
+      "联合充分假设：以上必要条件组合后，足以支撑当前目标成立（待验证）",
+      "待审查：这些条件是否存在遗漏、重复或把实现方案误当成必要条件？",
+    ].join("\n");
+  }
+
+  if (stage === "path") {
+    const children =
+      goal.children.length > 0
+        ? goal.children
+            .map((childId) => {
+              const child = goals[childId];
+              return `${child.relation} → ${child.id} ${child.title}（${child.owner}）`;
+            })
+            .join("\n")
+        : "当前没有子 Goal；需先判断本目标是否已可直接执行。";
+    return `条件到子目标的映射：\n${children}\n\n覆盖检查：每条必要条件都必须有对应 Goal 或执行证据。`;
+  }
+
+  if (stage === "execute") {
+    return [
+      `执行主体：${goal.owner}`,
+      `当前状态：${goal.status}`,
+      "自动推进边界：已确认条件、预算和权限范围内。",
+      "升级规则：越权、不可逆、高影响或证据不足时暂停并交由人判断。",
+    ].join("\n");
+  }
+
+  return [
+    `验收对象：${goal.title}`,
+    `预期证据：${goal.conditionSummary}`,
+    "通过：证据写回当前 Goal，并向父目标传播支撑状态。",
+    "不通过：回到成立条件推导，标出受影响的子 Goal 并触发 Redo。",
+  ].join("\n");
+}
+
+function getMethodCheckResults(
+  goal: GoalNode,
+  stage: CanvasStage,
+  method: MethodDefinition,
+  draft = "",
+): { label: string; passed: boolean }[] {
+  const hasChildren = goal.children.length > 0;
+  const hasCompletedField = (label: string) => {
+    const match = draft.match(new RegExp(`${label}：([^\\n]+)`));
+    return Boolean(match?.[1].trim() && !match[1].includes("待补"));
+  };
+  const resultsByMethod: Record<string, boolean[]> = {
+    smart: [
+      Boolean(goal.title && goal.objective),
+      hasCompletedField("量化指标"),
+      hasCompletedField("可实现依据"),
+      Boolean(goal.parentId) || goal.id === "G0",
+      hasCompletedField("截止时间"),
+    ],
+    okr: [true, false, true, true],
+    "goal-contract": [true, false, true, false, Boolean(goal.parentId) || goal.id === "G0"],
+    counterfactual: [true, true, false, false],
+    fmea: [false, false, false, false],
+    coverage: [hasChildren, hasChildren, hasChildren, true],
+    wbs: [hasChildren, hasChildren, false, !hasChildren],
+    raci: [false, true, false, false],
+    "risk-gate": [true, false, false, false],
+    vv: [false, false, false, true],
+    "review-redo": [false, false, true, true],
+  };
+  const stageFallback: Record<CanvasStage, boolean[]> = {
+    goal: [true, false, false, true, false],
+    conditions: [true, true, false, false],
+    path: [hasChildren, hasChildren, false, false],
+    execute: [true, false, false, false],
+    verify: [false, false, true, true],
+  };
+  const results = resultsByMethod[method.id] ?? stageFallback[stage];
+
+  return method.checks.map((label, index) => ({
+    label,
+    passed: results[index] ?? false,
+  }));
 }
