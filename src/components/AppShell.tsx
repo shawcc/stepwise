@@ -1,18 +1,15 @@
 import { NavLink, Outlet } from "react-router-dom";
-import { BellDot, BookOpen, Eye, Network } from "lucide-react";
+import { Network } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { path: "/", label: "工作图谱", icon: Network },
-  { path: "/focused", label: "关注的工作", icon: Eye },
-  { path: "/decisions", label: "决策待办", icon: BellDot },
-  { path: "/knowledge", label: "知识库", icon: BookOpen },
 ];
 
 export function AppShell() {
   return (
     <div className="min-h-screen overflow-hidden bg-slate-100 text-slate-900">
-      <main className="grid h-screen grid-cols-1 gap-px bg-slate-200 md:grid-cols-[200px_minmax(0,1fr)]">
+      <main className="grid h-screen grid-cols-1 gap-px bg-slate-200 md:grid-cols-[168px_minmax(0,1fr)]">
         <aside className="bg-white md:flex md:min-h-0 md:flex-col">
           <div className="border-b border-slate-200 px-4 py-3 max-md:hidden">
             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700">WorkGraph</p>
@@ -20,7 +17,7 @@ export function AppShell() {
             <p className="mt-1 text-xs text-slate-500">工作事实源 · 权限内图谱</p>
           </div>
 
-          <nav className="grid grid-cols-4 gap-1 border-b border-slate-200 p-2 md:block md:space-y-1">
+          <nav className="border-b border-slate-200 p-2">
             {navItems.map((item) => {
               const Icon = item.icon;
               return (
@@ -41,11 +38,6 @@ export function AppShell() {
             })}
           </nav>
 
-          <div className="hidden min-h-0 flex-1 px-4 py-5 md:block">
-            <p className="text-[11px] leading-5 text-slate-400">
-              选择上方四个工作视图。进入工作图谱后，具体流程会在主区域逐步引导。
-            </p>
-          </div>
         </aside>
 
         <section className="flex min-h-0 flex-col overflow-hidden bg-slate-50">
