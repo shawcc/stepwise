@@ -639,6 +639,29 @@ export function submitDecision(
   return toStepwiseAction(action);
 }
 
+export function replaceStepwiseStore(value: unknown): void {
+  if (!isImportableWorkspace(value)) {
+    throw new Error("持久化 Workspace 快照格式无效。");
+  }
+  const persisted = value as Partial<StepwiseWorkspaceSnapshot>;
+  if (
+    typeof persisted.revision !== "number" ||
+    persisted.revision < 0 ||
+    !Number.isInteger(persisted.revision)
+  ) {
+    throw new Error("持久化 Workspace revision 无效。");
+  }
+
+  globalStore.__stepwiseWorkspaceStore = {
+    revision: persisted.revision,
+    updatedAt: value.updatedAt,
+    goals: structuredClone(value.goals),
+    actions: value.actions.map(toCanonicalAction),
+    relations: structuredClone(value.relations),
+    decompositionReviews: structuredClone(value.decompositionReviews),
+  };
+}
+
 export function resetStepwiseStoreForTests(): void {
   globalStore.__stepwiseWorkspaceStore = createInitialStore();
 }

@@ -8,6 +8,10 @@ import {
   updateWorkspaceDecomposition,
   updateWorkspaceRelation,
 } from "./_stepwise-store.js";
+import {
+  withPersistentWorkspace,
+  WorkspacePersistenceError,
+} from "./_workspace-persistence.js";
 
 const workspaceCommandSchema = z.discriminatedUnion("command", [
   z
@@ -67,12 +71,23 @@ export async function handleWorkspaceRequest(
   response: ServerResponse,
   parsedBody?: unknown,
 ): Promise<void> {
-  if (request.method === "GET") {
-    sendJson(response, 200, getWorkspaceSnapshot());
-    return;
-  }
-
   if (request.method !== "POST") {
+    if (request.method === "GET") {
+      try {
+        const workspace = await withPersistentWorkspace(() =>
+          getWorkspaceSnapshot(),
+        );
+        sendJson(response, 200, workspace);
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Workspace 持久化读取失败";
+        sendJson(response, 503, { error: message });
+      }
+      return;
+    }
+
     response.setHeader("Allow", "GET, POST");
     sendJson(response, 405, { error: "仅支持 GET 和 POST" });
     return;
@@ -82,7 +97,7 @@ export async function handleWorkspaceRequest(
     const command = workspaceCommandSchema.parse(
       parsedBody ?? (await readJsonBody(request)),
     );
-    const workspace =
+    const workspace = await withPersistentWorkspace(() =>
       command.command === "import"
         ? importWorkspaceSnapshot(command.snapshot)
         : command.command === "update-action"
@@ -94,7 +109,8 @@ export async function handleWorkspaceRequest(
               : confirmWorkspaceDecomposition(
                   command.proposalId,
                   command.decidedById,
-                );
+                ),
+    );
     sendJson(response, 200, workspace);
   } catch (error) {
     const message =
@@ -103,6 +119,10 @@ export async function handleWorkspaceRequest(
         : error instanceof Error
           ? error.message
           : "Workspace 请求失败";
-    sendJson(response, 400, { error: message });
+    sendJson(
+      response,
+      error instanceof WorkspacePersistenceError ? 503 : 400,
+      { error: message },
+    );
   }
 }

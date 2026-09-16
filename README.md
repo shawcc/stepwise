@@ -56,8 +56,15 @@ Goal、Action、Relation、Decomposition Review、Evidence 和 Decision 统一�
 - `WORKGRAPH_AI_MODEL`
 - `STEPWISE_MCP_WRITE_TOKEN`
 - `STEPWISE_MCP_ALLOWED_ORIGINS`，可选，多个可信浏览器 Origin 用逗号分隔
+- `SUPABASE_URL`
+- `SUPABASE_SECRET_KEY`，使用服务端 Secret Key，不要使用 publishable/anon key
+- `STEPWISE_WORKSPACE_ID`，可选，默认 `default`
 
 部署后前端通过同源 `/api/workspace` 读写工作事实，并调用 `/api/agent` 和 `/api/run`；模型密钥不会发送到浏览器。Alexa+ 或其他 MCP 客户端通过 `https://<your-domain>/api/mcp` 访问同一份工作事实。
+
+Supabase 表结构位于
+`supabase/migrations/202609160001_create_stepwise_workspaces.sql`。服务端将完整
+Workspace 保存为单行 JSONB 快照，并用 `revision` 条件更新避免并发写覆盖。
 
 ## Stepwise MCP
 
@@ -75,11 +82,11 @@ MCP 使用无会话 Streamable HTTP，只接受 `POST`。当前提供：
 
 ## 当前边界
 
-- Web 与 MCP 已统一使用服务端进程内 store；这只是单进程内的一致事实源，不是持久数据库。
-- Serverless 冷启动、实例切换或扩缩容仍可能恢复各自的演示数据，不能宣称跨实例一致性。
+- 配置 Supabase 后，Web 与 MCP 统一使用持久化 Workspace 快照；未配置时，本地开发仍回退到进程内 store。
+- 当前以单行 JSONB 保存一个逻辑 Workspace，适合赛事原型；正式多人协作需要按租户拆分、身份鉴权和更细粒度的审计表。
 - 当前执行 Agent 可以完成有边界的知识工作并回填模型产物，但尚不能调用浏览器、代码仓库或第三方业务工具。
 - 浏览器 v2 快照兼容迁移旧版 Action 数据；仅当服务端 revision 为 `0` 时可导入，已有服务端变更不会被旧快照覆盖。
-- 下一步应把当前 store 替换为带身份、权限、并发控制和持久化的数据库，再接入真实外部执行工具。
+- 下一步应增加身份、Goal 级权限和审计日志，再接入真实外部执行工具。
 
 ## 验证
 

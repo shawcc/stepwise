@@ -10,6 +10,7 @@ import {
   submitDecision,
   type StepwiseActionStatus,
 } from "./_stepwise-store.js";
+import { withPersistentWorkspace } from "./_workspace-persistence.js";
 
 type McpEnvironment = {
   writeToken?: string;
@@ -109,7 +110,7 @@ export function createStepwiseMcpServer(
       },
     },
     async ({ goal_id, response_format }) => {
-      const goal = getGoal(goal_id);
+      const goal = await withPersistentWorkspace(() => getGoal(goal_id));
       if (!goal) {
         return toolError(
           new Error(
@@ -158,7 +159,9 @@ export function createStepwiseMcpServer(
       },
     },
     async ({ goal_id, response_format }) => {
-      const proposal = getDecompositionProposal(goal_id);
+      const proposal = await withPersistentWorkspace(() =>
+        getDecompositionProposal(goal_id),
+      );
       if (!proposal) {
         return toolError(
           new Error(`Goal ${goal_id} 当前没有 Decomposition Proposal。`),
@@ -215,34 +218,36 @@ export function createStepwiseMcpServer(
     }) => {
       try {
         requireWriteAccess(write_token, environment);
-        const goal = getGoal(goal_id);
-        if (!goal) throw new Error(`Goal ${goal_id} 不存在。`);
-        if (decided_by !== goal.dri.name) {
-          throw new Error(
-            `只有 ${actorLabel(goal.dri)} 可以确认 Goal ${goal.id} 的拆解。`,
+        return await withPersistentWorkspace(() => {
+          const goal = getGoal(goal_id);
+          if (!goal) throw new Error(`Goal ${goal_id} 不存在。`);
+          if (decided_by !== goal.dri.name) {
+            throw new Error(
+              `只有 ${actorLabel(goal.dri)} 可以确认 Goal ${goal.id} 的拆解。`,
+            );
+          }
+          const proposal = getDecompositionProposal(goal_id);
+          if (!proposal || proposal.id !== proposal_id) {
+            throw new Error(
+              `Goal ${goal_id} 不存在 Proposal ${proposal_id}。`,
+            );
+          }
+          const confirmed = confirmDecompositionProposal(
+            proposal_id,
+            goal.dri,
           );
-        }
-        const proposal = getDecompositionProposal(goal_id);
-        if (!proposal || proposal.id !== proposal_id) {
-          throw new Error(
-            `Goal ${goal_id} 不存在 Proposal ${proposal_id}。`,
+          return result(
+            {
+              proposal: confirmed,
+              goal: getGoal(goal_id),
+              childGoals: confirmed.proposedGoals.map((child) =>
+                getGoal(child.proposedId),
+              ),
+            },
+            `Human DRI 已确认 ${proposal_id}，创建 ${confirmed.proposedGoals.length} 个正式下级 Goal。`,
+            response_format,
           );
-        }
-        const confirmed = confirmDecompositionProposal(
-          proposal_id,
-          goal.dri,
-        );
-        return result(
-          {
-            proposal: confirmed,
-            goal: getGoal(goal_id),
-            childGoals: confirmed.proposedGoals.map((child) =>
-              getGoal(child.proposedId),
-            ),
-          },
-          `Human DRI 已确认 ${proposal_id}，创建 ${confirmed.proposedGoals.length} 个正式下级 Goal。`,
-          response_format,
-        );
+        });
       } catch (error) {
         return toolError(error);
       }
@@ -272,9 +277,11 @@ export function createStepwiseMcpServer(
       },
     },
     async ({ goal_id, status, limit, offset, response_format }) => {
-      const actions = listActions(
-        goal_id,
-        status as StepwiseActionStatus | undefined,
+      const actions = await withPersistentWorkspace(() =>
+        listActions(
+          goal_id,
+          status as StepwiseActionStatus | undefined,
+        ),
       );
       const items = actions.slice(offset, offset + limit);
       const output = {
@@ -351,30 +358,32 @@ export function createStepwiseMcpServer(
     }) => {
       try {
         requireWriteAccess(write_token, environment);
-        const goal = getGoal(goal_id);
-        if (!goal) {
-          throw new Error(`Goal ${goal_id} 不存在。`);
-        }
-        if (goal.childGoalIds.length > 0) {
-          throw new Error(
-            `Goal ${goal_id} 是组合 Goal，包含下级 Goal，不能直接创建 Action。请在叶子 Goal 上执行。`,
+        return await withPersistentWorkspace(() => {
+          const goal = getGoal(goal_id);
+          if (!goal) {
+            throw new Error(`Goal ${goal_id} 不存在。`);
+          }
+          if (goal.childGoalIds.length > 0) {
+            throw new Error(
+              `Goal ${goal_id} 是组合 Goal，包含下级 Goal，不能直接创建 Action。请在叶子 Goal 上执行。`,
+            );
+          }
+          const action = createAction({
+            goalId: goal_id,
+            title,
+            rationale,
+            agent,
+            riskLevel: risk_level,
+            proposedBy: proposed_by,
+            approvedBy: approved_by,
+            authorizationRef: authorization_ref,
+          });
+          return result(
+            { action },
+            `已创建 Action **${action.title}** (${action.id})，状态为 \`${action.status}\`。`,
+            response_format,
           );
-        }
-        const action = createAction({
-          goalId: goal_id,
-          title,
-          rationale,
-          agent,
-          riskLevel: risk_level,
-          proposedBy: proposed_by,
-          approvedBy: approved_by,
-          authorizationRef: authorization_ref,
         });
-        return result(
-          { action },
-          `已创建 Action **${action.title}** (${action.id})，状态为 \`${action.status}\`。`,
-          response_format,
-        );
       } catch (error) {
         return toolError(error);
       }
@@ -428,23 +437,25 @@ export function createStepwiseMcpServer(
     }) => {
       try {
         requireWriteAccess(write_token, environment);
-        const action = recordOutcome(
-          action_id,
-          outcome,
-          evidence.map((item) => ({
-            label: String(item.label),
-            detail: String(item.detail),
-            kind: item.kind ?? "claim",
-            source: item.source,
-          })),
-          actor,
-          authorization_ref,
-        );
-        return result(
-          { action },
-          `已为 **${action.title}** 记录 Outcome 和 ${action.evidence.length} 条 Evidence；当前等待 DRI 验收。`,
-          response_format,
-        );
+        return await withPersistentWorkspace(() => {
+          const action = recordOutcome(
+            action_id,
+            outcome,
+            evidence.map((item) => ({
+              label: String(item.label),
+              detail: String(item.detail),
+              kind: item.kind ?? "claim",
+              source: item.source,
+            })),
+            actor,
+            authorization_ref,
+          );
+          return result(
+            { action },
+            `已为 **${action.title}** 记录 Outcome 和 ${action.evidence.length} 条 Evidence；当前等待 DRI 验收。`,
+            response_format,
+          );
+        });
       } catch (error) {
         return toolError(error);
       }
@@ -484,17 +495,19 @@ export function createStepwiseMcpServer(
     }) => {
       try {
         requireWriteAccess(write_token, environment);
-        const action = submitDecision(
-          action_id,
-          decision,
-          decided_by,
-          rationale,
-        );
-        return result(
-          { action },
-          `DRI Decision 已记录：**${action.title}** → \`${action.status}\`。`,
-          response_format,
-        );
+        return await withPersistentWorkspace(() => {
+          const action = submitDecision(
+            action_id,
+            decision,
+            decided_by,
+            rationale,
+          );
+          return result(
+            { action },
+            `DRI Decision 已记录：**${action.title}** → \`${action.status}\`。`,
+            response_format,
+          );
+        });
       } catch (error) {
         return toolError(error);
       }
