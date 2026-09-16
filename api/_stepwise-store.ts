@@ -6,6 +6,7 @@ import {
   relations as initialRelations,
   type Action,
   type Actor,
+  type CreateGoalInput,
   type DecompositionReview,
   type Goal,
   type Relation,
@@ -256,8 +257,76 @@ function nextRelationId(relations: Relation[]): string {
   return `R${max + 1}`;
 }
 
+function nextGoalId(goals: Record<string, Goal>): string {
+  const max = Object.keys(goals).reduce((current, id) => {
+    const match = /^G(\d+)$/.exec(id);
+    return match ? Math.max(current, Number(match[1])) : current;
+  }, 0);
+  return `G${max + 1}`;
+}
+
 export function getWorkspaceSnapshot(): StepwiseWorkspaceSnapshot {
   return snapshot();
+}
+
+export function createWorkspaceGoal(
+  input: CreateGoalInput,
+): StepwiseWorkspaceSnapshot {
+  const store = getStore();
+  const title = input.title.trim();
+  const intent = input.intent.trim();
+  const driName = input.driName.trim();
+  const driRole = input.driRole.trim() || "DRI";
+  const timezone = input.timezone.trim();
+  const startsAt = new Date(input.startsAt);
+  const dueAt = new Date(input.dueAt);
+  const successCriteria = input.successCriteria
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const constraints = input.constraints
+    .map((item) => item.trim())
+    .filter(Boolean);
+
+  if (!title || !intent || !driName || !timezone) {
+    throw new Error("Goal 标题、目标描述、Human DRI 和时区不能为空。");
+  }
+  if (
+    Number.isNaN(startsAt.getTime()) ||
+    Number.isNaN(dueAt.getTime()) ||
+    dueAt <= startsAt
+  ) {
+    throw new Error("Goal Deadline 必须晚于开始时间。");
+  }
+  if (successCriteria.length === 0) {
+    throw new Error("Goal 至少需要一条成功标准。");
+  }
+
+  const id = nextGoalId(store.goals);
+  store.goals[id] = {
+    id,
+    title,
+    intent,
+    dri: {
+      id: `H-${id}-DRI`,
+      name: driName,
+      kind: "human-dri",
+      role: driRole,
+    },
+    timebox: {
+      startsAt: startsAt.toISOString(),
+      dueAt: dueAt.toISOString(),
+      timezone,
+    },
+    status: "active",
+    level: 0,
+    successCriteria,
+    constraints,
+    autonomy:
+      input.autonomy.trim() ||
+      "Agent 可推进可逆工作；范围、高风险操作和最终验收由 Human DRI 决策。",
+  };
+  touch(store);
+  return snapshot(store);
 }
 
 export function importWorkspaceSnapshot(

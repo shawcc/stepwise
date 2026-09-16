@@ -3555,7 +3555,7 @@ function getMethodCheckResults(
     const match = draft.match(new RegExp(`${label}：([^\\n]+)`));
     return Boolean(match?.[1].trim() && !match[1].includes("待补"));
   };
-  const keyResultLines = draft.match(/^KR\d+：.+$/gm) ?? [];
+  const keyResultLines: string[] = draft.match(/^KR\d+：.+$/gm) ?? [];
   const hasVerifiableKeyResults =
     keyResultLines.length > 0 &&
     keyResultLines.every((line) => !line.includes("待补充"));

@@ -55,6 +55,19 @@ export type Goal = {
   autonomy: string;
 };
 
+export type CreateGoalInput = {
+  title: string;
+  intent: string;
+  driName: string;
+  driRole: string;
+  startsAt: string;
+  dueAt: string;
+  timezone: string;
+  successCriteria: string[];
+  constraints: string[];
+  autonomy: string;
+};
+
 export type Action = {
   id: string;
   goalId: string;

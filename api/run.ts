@@ -1,8 +1,11 @@
+import type { IncomingHttpHeaders } from "node:http";
+import { requirePrivateAccessJson } from "./_access.js";
 import { runExecutionAgent } from "./_agent-core.js";
 
 type RequestLike = {
   method?: string;
   body?: unknown;
+  headers?: IncomingHttpHeaders;
 };
 
 type ResponseLike = {
@@ -13,6 +16,7 @@ type ResponseLike = {
 
 export default async function handler(request: RequestLike, response: ResponseLike) {
   response.setHeader("Cache-Control", "no-store");
+  if (!requirePrivateAccessJson(request, response)) return;
 
   if (request.method !== "POST") {
     response.status(405).json({ error: "仅支持 POST" });

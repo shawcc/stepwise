@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test:access": "tsx scripts/access-smoke.ts",
+    "test:goal": "tsx scripts/goal-creation-smoke.ts",
     "test:mcp": "tsx scripts/mcp-smoke.ts",
     "test:workspace": "tsx scripts/workspace-storage-smoke.ts",
     "preview": "vite preview",

@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
+import type { CreateGoalInput } from "../src/data/stepwise-model.js";
 import {
   confirmWorkspaceDecomposition,
+  createWorkspaceGoal,
   getWorkspaceSnapshot,
   importWorkspaceSnapshot,
   updateWorkspaceAction,
@@ -19,6 +21,25 @@ const workspaceCommandSchema = z.discriminatedUnion("command", [
     .object({
       command: z.literal("import"),
       snapshot: z.unknown(),
+    })
+    .strict(),
+  z
+    .object({
+      command: z.literal("create-goal"),
+      goal: z
+        .object({
+          title: z.string().min(1).max(160),
+          intent: z.string().min(1).max(1000),
+          driName: z.string().min(1).max(120),
+          driRole: z.string().max(120),
+          startsAt: z.string().min(1).max(80),
+          dueAt: z.string().min(1).max(80),
+          timezone: z.string().min(1).max(80),
+          successCriteria: z.array(z.string().max(500)).min(1).max(12),
+          constraints: z.array(z.string().max(500)).max(12),
+          autonomy: z.string().max(1000),
+        })
+        .strict(),
     })
     .strict(),
   z
@@ -103,16 +124,18 @@ export async function handleWorkspaceRequest(
     const workspace = await withPersistentWorkspace(() =>
       command.command === "import"
         ? importWorkspaceSnapshot(command.snapshot)
-        : command.command === "update-action"
-          ? updateWorkspaceAction(command.action)
-          : command.command === "update-relation"
-            ? updateWorkspaceRelation(command.relation)
-            : command.command === "update-decomposition"
-              ? updateWorkspaceDecomposition(command.review)
-              : confirmWorkspaceDecomposition(
-                  command.proposalId,
-                  command.decidedById,
-                ),
+        : command.command === "create-goal"
+          ? createWorkspaceGoal(command.goal as CreateGoalInput)
+          : command.command === "update-action"
+            ? updateWorkspaceAction(command.action)
+            : command.command === "update-relation"
+              ? updateWorkspaceRelation(command.relation)
+              : command.command === "update-decomposition"
+                ? updateWorkspaceDecomposition(command.review)
+                : confirmWorkspaceDecomposition(
+                    command.proposalId,
+                    command.decidedById,
+                  ),
     );
     sendJson(response, 200, workspace);
   } catch (error) {

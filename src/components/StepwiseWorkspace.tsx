@@ -15,6 +15,7 @@ import {
   Map,
   Network,
   Play,
+  Plus,
   RotateCcw,
   Send,
   ShieldCheck,
@@ -26,6 +27,7 @@ import {
   initialActions,
   type Action,
   type ActionStatus,
+  type CreateGoalInput,
   type DecompositionReview,
   type Goal,
   type GoalStatus,
@@ -38,6 +40,7 @@ import {
 } from "@/lib/stepwise-workspace-storage";
 import {
   confirmDecomposition as confirmServerDecomposition,
+  createGoal as createServerGoal,
   fetchWorkspace,
   importWorkspace,
   updateAction as updateServerAction,
@@ -214,6 +217,7 @@ export function StepwiseWorkspace() {
   const [decompositionReviews, setDecompositionReviews] = useState<
     DecompositionReview[]
   >(initialWorkspace.decompositionReviews);
+  const [showCreateGoal, setShowCreateGoal] = useState(false);
   const [workspaceSyncing, setWorkspaceSyncing] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
@@ -275,7 +279,9 @@ export function StepwiseWorkspace() {
       setWorkspaceSyncing(true);
       setWorkspaceError(null);
       try {
-        applyWorkspaceSnapshot(await operation());
+        const workspace = await operation();
+        applyWorkspaceSnapshot(workspace);
+        return workspace;
       } catch (error) {
         setWorkspaceError(
           error instanceof Error ? error.message : "Workspace 写入失败",
@@ -295,8 +301,14 @@ export function StepwiseWorkspace() {
     <main className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm sm:min-h-[760px]">
       <WorkspaceHeader
         goalRecords={goalRecords}
+        onCreateGoal={() => setShowCreateGoal(true)}
         onDocument={() => {
-          if (!selection) openGoal("G0");
+          if (!selection) {
+            const rootGoal = Object.values(goalRecords).find(
+              (goal) => goal.level === 0,
+            );
+            if (rootGoal) openGoal(rootGoal.id);
+          }
         }}
         onMap={() => {
           setSelection(null);
@@ -342,9 +354,9 @@ export function StepwiseWorkspace() {
                 setSelectedDecompositionGoalId(null);
                 setSelectedRelationId(id);
               }}
-              onUpdate={(updated) =>
-                commitWorkspace(() => updateServerAction(updated))
-              }
+              onUpdate={async (updated) => {
+                await commitWorkspace(() => updateServerAction(updated));
+              }}
               relations={relations}
             />
           )
@@ -354,6 +366,7 @@ export function StepwiseWorkspace() {
             decompositionReviews={decompositionReviews}
             goalRecords={goalRecords}
             onAction={openAction}
+            onCreateGoal={() => setShowCreateGoal(true)}
             onDecomposition={(id) => {
               setSelectedRelationId(null);
               setSelectedDecompositionGoalId(id);
@@ -372,21 +385,23 @@ export function StepwiseWorkspace() {
           <DecompositionPanel
             goalRecords={goalRecords}
             onClose={() => setSelectedDecompositionGoalId(null)}
-            onConfirm={(review) =>
-              commitWorkspace(() =>
+            onConfirm={async (review) => {
+              await commitWorkspace(() =>
                 confirmServerDecomposition(
                   review.id,
                   goalRecords[review.goalId].dri.id,
                 ),
-              )
-            }
+              );
+            }}
             onGoal={(id) => {
               setSelectedDecompositionGoalId(null);
               openGoal(id);
             }}
-            onUpdate={(updated) =>
-              commitWorkspace(() => updateServerDecomposition(updated))
-            }
+            onUpdate={async (updated) => {
+              await commitWorkspace(() =>
+                updateServerDecomposition(updated),
+              );
+            }}
             review={selectedDecomposition}
           />
         ) : null}
@@ -400,10 +415,27 @@ export function StepwiseWorkspace() {
               if (goalRecords[id]) openGoal(id);
               else openAction(id);
             }}
-            onUpdate={(updated) =>
-              commitWorkspace(() => updateServerRelation(updated))
-            }
+            onUpdate={async (updated) => {
+              await commitWorkspace(() => updateServerRelation(updated));
+            }}
             relation={selectedRelation}
+          />
+        ) : null}
+
+        {showCreateGoal ? (
+          <CreateGoalDialog
+            onClose={() => setShowCreateGoal(false)}
+            onSubmit={async (input) => {
+              const previousIds = new Set(Object.keys(goalRecords));
+              const workspace = await commitWorkspace(() =>
+                createServerGoal(input),
+              );
+              const created = Object.values(workspace.goals).find(
+                (goal) => !previousIds.has(goal.id),
+              );
+              setShowCreateGoal(false);
+              if (created) openGoal(created.id);
+            }}
           />
         ) : null}
       </div>
@@ -411,8 +443,235 @@ export function StepwiseWorkspace() {
   );
 }
 
+function CreateGoalDialog({
+  onClose,
+  onSubmit,
+}: {
+  onClose: () => void;
+  onSubmit: (input: CreateGoalInput) => Promise<void>;
+}) {
+  const now = new Date();
+  const defaultDueAt = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000);
+  const toLocalInput = (value: Date) => {
+    const offset = value.getTimezoneOffset() * 60_000;
+    return new Date(value.getTime() - offset).toISOString().slice(0, 16);
+  };
+  const [title, setTitle] = useState("");
+  const [intent, setIntent] = useState("");
+  const [driName, setDriName] = useState("");
+  const [driRole, setDriRole] = useState("负责人");
+  const [dueAt, setDueAt] = useState(toLocalInput(defaultDueAt));
+  const [successCriteria, setSuccessCriteria] = useState("");
+  const [constraints, setConstraints] = useState("");
+  const [autonomy, setAutonomy] = useState(
+    "Agent 可推进可逆工作；范围、高风险操作和最终验收由 Human DRI 决策。",
+  );
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await onSubmit({
+        title,
+        intent,
+        driName,
+        driRole,
+        startsAt: new Date().toISOString(),
+        dueAt: new Date(dueAt).toISOString(),
+        timezone:
+          Intl.DateTimeFormat().resolvedOptions().timeZone || "Asia/Shanghai",
+        successCriteria: successCriteria.split("\n"),
+        constraints: constraints.split("\n"),
+        autonomy,
+      });
+    } catch (submitError) {
+      setError(
+        submitError instanceof Error ? submitError.message : "Goal 创建失败",
+      );
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="absolute inset-0 z-50 grid place-items-center overflow-auto bg-slate-950/45 p-4">
+      <form
+        aria-labelledby="create-goal-title"
+        className="flex min-h-0 max-h-[calc(100%_-_2rem)] w-full max-w-2xl flex-col rounded-lg border border-slate-300 bg-white shadow-2xl"
+        onSubmit={submit}
+      >
+        <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-700">
+              Human DRI
+            </p>
+            <h2
+              className="mt-1 text-lg font-semibold text-slate-950"
+              id="create-goal-title"
+            >
+              新建 Goal
+            </h2>
+          </div>
+          <button
+            aria-label="关闭新建 Goal"
+            className="grid h-8 w-8 place-items-center rounded-md text-slate-400 hover:bg-slate-100 hover:text-slate-900"
+            disabled={submitting}
+            onClick={onClose}
+            type="button"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
+
+        <div className="grid min-h-0 flex-1 gap-4 overflow-auto px-5 py-5 sm:grid-cols-2">
+          <label className="sm:col-span-2">
+            <span className="text-[10px] font-semibold text-slate-500">
+              标题
+            </span>
+            <input
+              autoFocus
+              className="mt-1.5 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              maxLength={160}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="要达成什么结果？"
+              required
+              value={title}
+            />
+          </label>
+
+          <label className="sm:col-span-2">
+            <span className="text-[10px] font-semibold text-slate-500">
+              目标描述
+            </span>
+            <textarea
+              className="mt-1.5 min-h-20 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-sm leading-6 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              maxLength={1000}
+              onChange={(event) => setIntent(event.target.value)}
+              placeholder="结果发生后，什么会变得不同？"
+              required
+              value={intent}
+            />
+          </label>
+
+          <label>
+            <span className="text-[10px] font-semibold text-slate-500">
+              Human DRI
+            </span>
+            <input
+              className="mt-1.5 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              maxLength={120}
+              onChange={(event) => setDriName(event.target.value)}
+              placeholder="姓名"
+              required
+              value={driName}
+            />
+          </label>
+
+          <label>
+            <span className="text-[10px] font-semibold text-slate-500">
+              角色
+            </span>
+            <input
+              className="mt-1.5 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              maxLength={120}
+              onChange={(event) => setDriRole(event.target.value)}
+              value={driRole}
+            />
+          </label>
+
+          <label>
+            <span className="text-[10px] font-semibold text-slate-500">
+              Deadline
+            </span>
+            <input
+              className="mt-1.5 h-10 w-full rounded-md border border-slate-300 px-3 text-sm outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              min={toLocalInput(now)}
+              onChange={(event) => setDueAt(event.target.value)}
+              required
+              type="datetime-local"
+              value={dueAt}
+            />
+          </label>
+
+          <label>
+            <span className="text-[10px] font-semibold text-slate-500">
+              成功标准
+            </span>
+            <textarea
+              className="mt-1.5 min-h-24 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              onChange={(event) => setSuccessCriteria(event.target.value)}
+              placeholder={"每行一条\n可观察、可验收"}
+              required
+              value={successCriteria}
+            />
+          </label>
+
+          <label>
+            <span className="text-[10px] font-semibold text-slate-500">
+              约束
+            </span>
+            <textarea
+              className="mt-1.5 min-h-24 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              onChange={(event) => setConstraints(event.target.value)}
+              placeholder={"每行一条\n可留空"}
+              value={constraints}
+            />
+          </label>
+
+          <label className="sm:col-span-2">
+            <span className="text-[10px] font-semibold text-slate-500">
+              Agent 授权边界
+            </span>
+            <textarea
+              className="mt-1.5 min-h-16 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+              maxLength={1000}
+              onChange={(event) => setAutonomy(event.target.value)}
+              value={autonomy}
+            />
+          </label>
+
+          {error ? (
+            <p
+              aria-live="polite"
+              className="sm:col-span-2 text-xs font-medium text-rose-700"
+            >
+              {error}
+            </p>
+          ) : null}
+        </div>
+
+        <footer className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-4">
+          <button
+            className="h-9 rounded-md px-3 text-xs font-semibold text-slate-600 hover:bg-slate-200"
+            disabled={submitting}
+            onClick={onClose}
+            type="button"
+          >
+            取消
+          </button>
+          <button
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-4 text-xs font-semibold text-white hover:bg-cyan-800 disabled:opacity-50"
+            disabled={submitting}
+            type="submit"
+          >
+            {submitting ? (
+              <Activity className="h-3.5 w-3.5 animate-pulse" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            创建 Goal
+          </button>
+        </footer>
+      </form>
+    </div>
+  );
+}
+
 function WorkspaceHeader({
   goalRecords,
+  onCreateGoal,
   onDocument,
   onMap,
   onRefresh,
@@ -423,6 +682,7 @@ function WorkspaceHeader({
   workspaceSyncing,
 }: {
   goalRecords: Record<string, Goal>;
+  onCreateGoal: () => void;
   onDocument: () => void;
   onMap: () => void;
   onRefresh: () => void;
@@ -451,6 +711,14 @@ function WorkspaceHeader({
         </div>
 
         <div className="flex items-center gap-2">
+          <button
+            className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-cyan-800"
+            onClick={onCreateGoal}
+            type="button"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Goal
+          </button>
           {workspaceSyncing ? (
             <span
               aria-live="polite"
@@ -525,6 +793,7 @@ function WorkMap({
   decompositionReviews,
   goalRecords,
   onAction,
+  onCreateGoal,
   onDecomposition,
   onGoal,
   onRelation,
@@ -535,6 +804,7 @@ function WorkMap({
   decompositionReviews: DecompositionReview[];
   goalRecords: Record<string, Goal>;
   onAction: (id: string) => void;
+  onCreateGoal: () => void;
   onDecomposition: (goalId: string) => void;
   onGoal: (id: string) => void;
   onRelation: (id: string) => void;
@@ -550,9 +820,31 @@ function WorkMap({
     .filter((action) => !actionPositions[action.id])
     .map((action) => action.id);
   const dynamicActionCount = dynamicActionIds.length;
-  const canvasHeight = showActions
-    ? 1040 + Math.ceil(dynamicActionCount / 5) * 140
+  const dynamicActionRows = Math.ceil(dynamicActionCount / 5);
+  const dynamicGoals = Object.values(goalRecords).filter(
+    (goal) => !goalPositions[goal.id],
+  );
+  const dynamicGoalStartY = showActions
+    ? 1040 + dynamicActionRows * 140
+    : 758;
+  const dynamicGoalPositions = Object.fromEntries(
+    dynamicGoals.map((goal, index) => [
+      goal.id,
+      {
+        x: 40 + (index % 3) * 380,
+        y: dynamicGoalStartY + 48 + Math.floor(index / 3) * 180,
+        width: 340,
+        height: 148,
+      },
+    ]),
+  ) as Record<string, NodePosition>;
+  const dynamicGoalRows = Math.ceil(dynamicGoals.length / 3);
+  const baseCanvasHeight = showActions
+    ? 1040 + dynamicActionRows * 140
     : 760;
+  const canvasHeight = dynamicGoals.length
+    ? dynamicGoalStartY + 48 + dynamicGoalRows * 180 + 24
+    : baseCanvasHeight;
   const submissionReview = decompositionReviews.find(
     (review) => review.goalId === "G4",
   );
@@ -567,8 +859,8 @@ function WorkMap({
         if (!viewport || viewport.scrollWidth <= viewport.clientWidth) return;
         viewport.scrollLeft = Math.max(
           0,
-          goalPositions.G0.x +
-            goalPositions.G0.width / 2 -
+          (goalPositions.G0?.x ?? 430) +
+            (goalPositions.G0?.width ?? 340) / 2 -
             viewport.clientWidth / 2,
         );
       });
@@ -590,6 +882,29 @@ function WorkMap({
         <MapLegend showActions={showActions} />
       </header>
 
+      {Object.keys(goalRecords).length === 0 ? (
+        <div className="grid min-h-0 flex-1 place-items-center bg-white px-6 text-center">
+          <div className="max-w-sm">
+            <span className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-cyan-300 bg-cyan-50 text-cyan-800">
+              <CircleDot className="h-5 w-5" />
+            </span>
+            <h2 className="mt-4 text-lg font-semibold text-slate-950">
+              从第一个 Goal 开始
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              先定义结果、DRI、期限和成功标准。
+            </p>
+            <button
+              className="mt-5 inline-flex h-10 items-center gap-2 rounded-md bg-slate-950 px-4 text-sm font-semibold text-white hover:bg-cyan-800"
+              onClick={onCreateGoal}
+              type="button"
+            >
+              <Plus className="h-4 w-4" />
+              新建 Goal
+            </button>
+          </div>
+        </div>
+      ) : (
       <div
         className="min-h-0 flex-1 overflow-auto bg-slate-100 p-4"
         ref={mapViewportRef}
@@ -603,6 +918,15 @@ function WorkMap({
           <div className="absolute inset-x-0 top-[506px] h-[252px] border-b border-slate-200 bg-white" />
           {showActions ? (
             <div className="absolute inset-x-0 top-[758px] h-[282px] bg-slate-50/80" />
+          ) : null}
+          {dynamicGoals.length ? (
+            <div
+              className="absolute inset-x-0 border-t border-slate-200 bg-white"
+              style={{
+                height: canvasHeight - dynamicGoalStartY,
+                top: dynamicGoalStartY,
+              }}
+            />
           ) : null}
 
           <svg
@@ -691,6 +1015,9 @@ function WorkMap({
           {showActions ? (
             <MapLane label="ACTION" y={782} />
           ) : null}
+          {dynamicGoals.length ? (
+            <MapLane label="NEW GOALS" y={dynamicGoalStartY + 18} />
+          ) : null}
 
           <button
             className="absolute left-1/2 top-[210px] z-30 flex -translate-x-1/2 items-center gap-2 rounded-md border border-cyan-300 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-900 shadow-sm hover:border-cyan-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
@@ -731,7 +1058,9 @@ function WorkMap({
               goalRecords={goalRecords}
               key={goal.id}
               onClick={() => onGoal(goal.id)}
-              position={goalPositions[goal.id]}
+              position={
+                goalPositions[goal.id] ?? dynamicGoalPositions[goal.id]
+              }
             />
           ))}
 
@@ -775,6 +1104,7 @@ function WorkMap({
           })}
         </div>
       </div>
+      )}
     </section>
   );
 }

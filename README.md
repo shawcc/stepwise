@@ -36,14 +36,26 @@ MCP 读取工具默认开放。要启用 Action、Outcome 和 DRI Decision 写�
 STEPWISE_MCP_WRITE_TOKEN=replace-with-a-long-random-value
 ```
 
+生产环境还必须配置独立的私人访问码：
+
+```bash
+STEPWISE_ACCESS_CODE=replace-with-a-unique-high-entropy-value
+```
+
+未授权浏览器只显示访问码入口，`/api/workspace`、`/api/agent`、`/api/run`
+和 `/api/mcp` 同时返回 `401`。MCP 客户端使用
+`Authorization: Bearer <STEPWISE_ACCESS_CODE>` 进入私人实例，写操作仍需额外的
+`STEPWISE_MCP_WRITE_TOKEN`。
+
 密钥只能使用服务端环境变量，不能使用 `VITE_` 前缀，否则会被打包到浏览器。
 
 打开 `http://localhost:5173/`：
 
 1. 在 Map 同时查看 Goal 上下级、Goal 依赖和 Action 依赖。
-2. 点击 Goal 或 Action 进入各自详情页。
-3. 点击任意连接标签查看关系理由、假设和历史推演。
-4. 在叶子 Goal 下执行 Action，并由 Human DRI 验收 Evidence。
+2. 通过顶栏的 `Goal` 入口由 Human DRI 创建正式根 Goal。
+3. 点击 Goal 或 Action 进入各自详情页。
+4. 点击任意连接标签查看关系理由、假设和历史推演。
+5. 在叶子 Goal 下执行 Action，并由 Human DRI 验收 Evidence。
 
 Goal、Action、Relation、Decomposition Review、Evidence 和 Decision 统一读写同源 `/api/workspace`，并与 MCP 共享同一个服务端 store。浏览器 `localStorage` v2 只用于首次迁移旧数据和服务不可用时的只读兜底缓存，不再是权威事实源。
 
@@ -54,6 +66,7 @@ Goal、Action、Relation、Decomposition Review、Evidence 和 Decision 统一�
 - `WORKGRAPH_AI_API_KEY`
 - `WORKGRAPH_AI_BASE_URL`
 - `WORKGRAPH_AI_MODEL`
+- `STEPWISE_ACCESS_CODE`，生产必填，使用独立的高熵访问码
 - `STEPWISE_MCP_WRITE_TOKEN`
 - `STEPWISE_MCP_ALLOWED_ORIGINS`，可选，多个可信浏览器 Origin 用逗号分隔
 - `SUPABASE_URL`
@@ -83,7 +96,7 @@ MCP 使用无会话 Streamable HTTP，只接受 `POST`。当前提供：
 ## 当前边界
 
 - 配置 Supabase 后，Web 与 MCP 统一使用持久化 Workspace 快照；未配置时，本地开发仍回退到进程内 store。
-- 当前以单行 JSONB 保存一个逻辑 Workspace，适合赛事原型；正式多人协作需要按租户拆分、身份鉴权和更细粒度的审计表。
+- 当前使用一个私人访问码保护单个逻辑 Workspace，适合单人原型；正式开放前需要按租户拆分 Workspace，并升级为用户身份、Goal 权限和细粒度审计。
 - 当前执行 Agent 可以完成有边界的知识工作并回填模型产物，但尚不能调用浏览器、代码仓库或第三方业务工具。
 - 浏览器 v2 快照兼容迁移旧版 Action 数据；仅当服务端 revision 为 `0` 时可导入，已有服务端变更不会被旧快照覆盖。
 - 下一步应增加身份、Goal 级权限和审计日志，再接入真实外部执行工具。
@@ -93,6 +106,8 @@ MCP 使用无会话 Streamable HTTP，只接受 `POST`。当前提供：
 ```bash
 npm run test:mcp
 npm run test:workspace
+npm run test:goal
+npm run test:access
 npm run lint
 npm run check
 npm run build

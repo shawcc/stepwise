@@ -1,5 +1,6 @@
 import type {
   Action,
+  CreateGoalInput,
   DecompositionReview,
   Relation,
 } from "@/data/stepwise-model";
@@ -12,6 +13,7 @@ export type ServerWorkspaceSnapshot = Omit<WorkspaceSnapshot, "version"> & {
 
 type WorkspaceCommand =
   | { command: "import"; snapshot: WorkspaceSnapshot }
+  | { command: "create-goal"; goal: CreateGoalInput }
   | { command: "update-action"; action: Action }
   | { command: "update-relation"; relation: Relation }
   | { command: "update-decomposition"; review: DecompositionReview }
@@ -62,6 +64,12 @@ export function importWorkspace(
   snapshot: WorkspaceSnapshot,
 ): Promise<ServerWorkspaceSnapshot> {
   return sendCommand({ command: "import", snapshot });
+}
+
+export function createGoal(
+  goal: CreateGoalInput,
+): Promise<ServerWorkspaceSnapshot> {
+  return sendCommand({ command: "create-goal", goal });
 }
 
 export function updateAction(
