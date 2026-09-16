@@ -11,6 +11,7 @@ import {
 import {
   withPersistentWorkspace,
   WorkspacePersistenceError,
+  workspacePersistenceMode,
 } from "./_workspace-persistence.js";
 
 const workspaceCommandSchema = z.discriminatedUnion("command", [
@@ -71,6 +72,8 @@ export async function handleWorkspaceRequest(
   response: ServerResponse,
   parsedBody?: unknown,
 ): Promise<void> {
+  response.setHeader("X-Stepwise-Storage", workspacePersistenceMode());
+
   if (request.method !== "POST") {
     if (request.method === "GET") {
       try {

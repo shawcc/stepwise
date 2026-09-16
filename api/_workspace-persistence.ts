@@ -23,6 +23,20 @@ export class WorkspacePersistenceError extends Error {}
 
 let operationQueue: Promise<void> = Promise.resolve();
 
+export function workspacePersistenceMode():
+  | "memory"
+  | "supabase"
+  | "misconfigured" {
+  const hasUrl = Boolean(process.env.SUPABASE_URL);
+  const hasSecret = Boolean(
+    process.env.SUPABASE_SECRET_KEY ??
+      process.env.SUPABASE_SERVICE_ROLE_KEY,
+  );
+  if (hasUrl && hasSecret) return "supabase";
+  if (!hasUrl && !hasSecret) return "memory";
+  return "misconfigured";
+}
+
 function configuration(): SupabaseConfiguration | undefined {
   const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const secretKey =
