@@ -1,284 +1,202 @@
 workgraph:
-  id: wg-workgraph-product-v0.3
-  name: WorkGraph 产品工作图谱
-  version: v0.3
+  id: wg-stepwise-product-v0.8
+  name: Stepwise 产品工作图谱
+  version: v0.8
   status: prototype_validation
-  updated_at: 2026-08-18
-  definition: "组织通过工作图谱找到共同目标，在目标工作台中工作，通过过程推演完成人与 Agent 协作，并将确认结果回写为可追溯的组织事实。"
+  updated_at: 2026-09-16
+  definition: "Stepwise 让 Human DRI 通过官方 Reasoning Agent 治理 Goal 与 Proposal，并让用户自带 Execution Agent 在授权内执行 Action。"
   core_concepts: docs/CORE_CONCEPTS.md
   current_artifacts:
     - docs/MRD.md
     - docs/PRD.md
-  archived_artifacts:
-    - docs/archive/MRD.v0.2-legacy.md
-    - docs/archive/PRD.v0.2-legacy.md
-    - workgraph/archive/product_workgraph.v0.2-legacy.yaml
 
 nodes:
   - id: thesis-agent-native-organization
     type: product_thesis
     title: 少量人治理大量 Agent
-    content: "未来组织可能由少量人定义目标、授权并处理高风险决策，大量 Agent 负责分析、提案、执行、检查和回填。"
-    epistemic_status: hypothesis
+    content: "少量 Human DRI 定义 Goal、授权并处理关键决策；官方 Reasoning Agent 负责提案，用户自带 Execution Agent 负责执行和回填。"
 
-  - id: thesis-common-goal-entry
+  - id: thesis-goal-entry
     type: product_thesis
-    title: 共同目标是工作入口
-    content: "组织级入口是工作图谱，具体工作的主入口是 Objective；IM、通知和待办只负责把注意力路由回目标。"
-    epistemic_status: product_decision
+    title: Goal 是工作入口
+    content: "团队围绕共同 Goal 工作，IM、通知和待办只负责把注意力路由回 Goal。"
 
-  - id: thesis-result-process-version
-    type: product_thesis
-    title: 结果、过程与版本分离
-    content: "目标工作台保存当前确认结果，过程推演保存共同工作，版本记录保存确认后的变化。"
-    epistemic_status: product_decision
-
-  - id: product-workgraph
-    type: product_definition
-    title: WorkGraph
-    content: "面向 Agent 原生组织的递归目标执行系统，以 OKR 作为目标协议，以推理、执行、证据和治理作为内核。"
-
-  - id: entry-attention-router
-    type: product_entry
-    title: 注意力路由
-    content: "通知、IM 和待办提示用户哪里需要关注或决策，但不保存正式工作事实。"
-    visibility: future
-
-  - id: entry-work-map
-    type: product_entry
-    title: 工作图谱
-    content: "组织级导航，展示权限范围内的 Objective 层级，支持逐层进入和返回。"
-    visibility: primary
-
-  - id: entry-objective-workspace
-    type: product_entry
-    title: 目标工作台
-    content: "具体工作的主入口，以递归文档展示当前 Objective 已确认的工作事实。"
-    visibility: primary
-
-  - id: entry-process-deliberation
-    type: product_entry
-    title: 过程推演
-    content: "锚定到章节或结论的结构化事件流，保存问题、AI 分析、提案、审查和决策。"
-    visibility: contextual
-
-  - id: view-version-record
-    type: product_view
-    title: 版本记录
-    content: "保存每次确认前后的差异、依据、参与者和时间。"
-    visibility: contextual
-
-  - id: view-dependencies
-    type: derived_view
-    title: 依赖视图
-    content: "从 Objective、Initiative 和 Action 的依赖关系派生。"
-    visibility: hidden_in_prototype
-
-  - id: view-evidence
-    type: derived_view
-    title: 证据视图
-    content: "从 Evidence 与 KR、条件和 Outcome 的关系派生。"
-    visibility: hidden_in_prototype
-
-  - id: view-monitor
-    type: derived_view
-    title: 运行监控
-    content: "从执行状态、风险、阻塞和 Agent 事件派生。"
-    visibility: hidden_in_prototype
-
-  - id: view-timeline
-    type: derived_view
-    title: 时间线
-    content: "从过程事件和版本记录派生。"
-    visibility: hidden_in_prototype
-
-  - id: object-objective
-    type: core_object
-    title: Objective
-    content: "希望发生的变化，也是唯一递归目标单元。"
-
-  - id: object-key-result
-    type: core_object
-    title: Key Result
-    content: "判断所属 Objective 是否达成的可衡量或可验证结果标准。"
-
-  - id: object-necessary-condition
-    type: core_object
-    title: Necessary Condition
-    content: "Objective 成立不可缺少的待验证因果条件。"
-
-  - id: object-initiative
-    type: core_object
-    title: Initiative
-    content: "为创造一个或多个必要条件而组织的一组工作。"
+  - id: object-goal
+    type: work_node
+    title: Goal
+    content: "希望发生的变化，也是唯一递归工作单元。组合 Goal 拥有下级 Goal；叶子 Goal 可以创建 Action。"
 
   - id: object-action
-    type: core_object
+    type: work_node
     title: Action
-    content: "可直接执行的最小工作单元。"
+    content: "对叶子 Goal 的一次真实执行，保存执行者、授权、输入、结果、Evidence 和 Decision。"
 
-  - id: object-outcome
-    type: core_object
-    title: Outcome
-    content: "Action 或 Initiative 实际产生的结果。"
+  - id: relation-decomposes
+    type: relation
+    title: decomposes
+    content: "Goal 到 Goal 的上下级连接。"
 
-  - id: object-evidence
-    type: core_object
-    title: Evidence
-    content: "支持或反驳 KR、必要条件和 Outcome 的可追溯事实。"
+  - id: relation-executes
+    type: relation
+    title: executes
+    content: "叶子 Goal 到 Action 的执行连接。"
 
-  - id: process-review
-    type: process
-    title: Review
-    content: "用 Evidence 核验 KR、必要条件和 Outcome，并形成 Decision。"
+  - id: relation-goal-dependency
+    type: relation
+    title: goal-dependency
+    content: "前置 Goal 到后续 Goal 的依赖连接。"
 
-  - id: object-decision
-    type: core_object
-    title: Decision
-    content: "审查后形成的接受、调整、重做或停止等正式判断。"
+  - id: relation-action-dependency
+    type: relation
+    title: action-dependency
+    content: "前置 Action 到后续 Action 的依赖连接。"
 
-  - id: actor-human
+  - id: record-decomposition-review
+    type: reasoning_record
+    title: Decomposition Review
+    content: "父 Goal 的整组拆解推演，保存数量、覆盖性、边界、候选方案和确认历史。"
+
+  - id: view-map
+    type: product_view
+    title: Map
+    content: "统一展示 Goal 上下级、Goal 依赖、Goal 到 Action 和 Action 依赖。"
+
+  - id: view-goal-detail
+    type: product_view
+    title: Goal Detail
+    content: "展示 Goal 属性、成功标准、下级、依赖、Action 和验收信息。"
+
+  - id: view-action-detail
+    type: product_view
+    title: Action Detail
+    content: "展示一次执行的授权、输入、结果、Evidence、依赖和 Decision。"
+
+  - id: view-relation-deliberation
+    type: product_view
+    title: Relation Deliberation
+    content: "保存每条连接的理由、假设、提案、确认和版本历史。"
+
+  - id: view-decomposition-deliberation
+    type: product_view
+    title: Decomposition Deliberation
+    content: "审查为什么是当前这组下级 Goal，而不是更多或更少。"
+
+  - id: actor-human-dri
     type: actor
-    title: Human
-    content: "负责目标、授权、价值判断和高风险决策。"
+    title: Human DRI
+    content: "对 Goal 成功标准、授权边界和最终验收负责。"
 
-  - id: actor-agent
+  - id: actor-planning-agent
     type: actor
-    title: Agent
-    content: "读取上下游和方法，分析、提出修改、执行检查并回填结果；默认不能直接改写正式结果。"
+    title: Official Reasoning Agent
+    content: "Stepwise 提供的统一、可版本化推理身份；提出 Goal 拆解、依赖关系和 Action Proposal，不执行或验收。"
 
-  - id: workflow-core-loop
-    type: workflow
-    title: 最小工作闭环
-    content: "工作图谱 -> 目标工作台 -> 过程推演 -> Agent 提案 -> 人工审查 -> 确认写入 -> 生成版本。"
+  - id: actor-execution-agent
+    type: actor
+    title: Execution Agent
+    content: "由用户自带，通过 MCP、API 或 Skill 在授权范围内执行 Action 并回填结果、Evidence 和异常。"
 
-  - id: governance-proposal-first
-    type: governance_rule
-    title: 提案优先
-    content: "Agent 输出先进入草稿和过程推演，只有经过授权确认才能写入正式目标文档。"
+  - id: record-goal-timebox
+    type: governance_attribute
+    title: Goal Timebox
+    content: "保存开始时间、Deadline 和时区；时间不是工作节点，也不替代成功标准。"
 
-  - id: governance-evidence
-    type: governance_rule
-    title: 证据验收
-    content: "Action 完成不等于 Objective 达成，必须由 Evidence 核验 Key Results。"
+  - id: record-decomposition-proposal
+    type: governance_record
+    title: Decomposition Proposal
+    content: "官方 Reasoning Agent 的拆解建议；只有对应 Goal 的 Human DRI 确认后才创建正式下级 Goal。"
 
-  - id: requirement-map
-    type: current_requirement
-    title: 递归工作图谱
-    content: "支持 Objective 逐层展开；地图下钻保持地图模式，只有明确操作才进入目标工作台。"
+  - id: storage-server-workspace-v3
+    type: prototype_infrastructure
+    title: Server Workspace v3
+    content: "Web 与 MCP 共享的进程内事实源，原子返回 Goal、Action、Relation 与 Decomposition Review；Serverless 冷启动和多实例下不替代生产数据库。"
 
-  - id: requirement-workspace
-    type: current_requirement
-    title: 递归目标文档
-    content: "目标工作台展示当前 Objective 的 KR、必要条件、路线、执行结果和审查决策，下级 Objective 作为内嵌文档继续递归。"
-
-  - id: requirement-deliberation
-    type: current_requirement
-    title: 结论级过程推演
-    content: "章节和关键结论均能打开过程推演，查看历史事件、统计、提案、决策和版本变化。"
-
-  - id: requirement-confirmation
-    type: current_requirement
-    title: 确认回写
-    content: "用户采用或编辑 Agent 提案后确认写入正式文档，系统生成版本和 Decision 事件。"
+  - id: cache-browser-workspace-v2
+    type: prototype_infrastructure
+    title: Browser Workspace Cache v2
+    content: "迁移旧版字符串 Actor，并只在服务端 revision 为 0 时导入；之后仅作为故障兜底缓存。"
 
 edges:
   - source: thesis-agent-native-organization
-    target: product-workgraph
+    target: object-goal
     relation: motivates
 
-  - source: thesis-common-goal-entry
-    target: entry-work-map
+  - source: thesis-goal-entry
+    target: view-map
     relation: defines
 
-  - source: thesis-common-goal-entry
-    target: entry-objective-workspace
-    relation: defines
+  - source: object-goal
+    target: relation-decomposes
+    relation: connects_through
 
-  - source: thesis-result-process-version
-    target: entry-objective-workspace
-    relation: separates
+  - source: object-goal
+    target: relation-executes
+    relation: connects_through
 
-  - source: thesis-result-process-version
-    target: entry-process-deliberation
-    relation: separates
+  - source: relation-executes
+    target: object-action
+    relation: creates
 
-  - source: thesis-result-process-version
-    target: view-version-record
-    relation: separates
-
-  - source: entry-work-map
-    target: entry-objective-workspace
-    relation: navigates_to
-
-  - source: entry-objective-workspace
-    target: entry-process-deliberation
+  - source: object-goal
+    target: view-goal-detail
     relation: opens
 
-  - source: entry-process-deliberation
-    target: view-version-record
-    relation: produces_after_confirmation
+  - source: object-goal
+    target: record-decomposition-review
+    relation: owns
 
-  - source: object-objective
-    target: object-objective
-    relation: contains_child_objective
+  - source: actor-planning-agent
+    target: record-decomposition-proposal
+    relation: proposes
 
-  - source: object-objective
-    target: object-key-result
-    relation: measured_by
+  - source: actor-human-dri
+    target: record-decomposition-proposal
+    relation: confirms
 
-  - source: object-objective
-    target: object-necessary-condition
-    relation: requires
+  - source: object-goal
+    target: record-goal-timebox
+    relation: governed_by
 
-  - source: object-necessary-condition
-    target: object-initiative
-    relation: created_by
-
-  - source: object-initiative
-    target: object-action
-    relation: organizes
+  - source: object-goal
+    target: storage-server-workspace-v3
+    relation: persisted_in
 
   - source: object-action
-    target: object-outcome
-    relation: produces
+    target: storage-server-workspace-v3
+    relation: persisted_in
 
-  - source: object-evidence
-    target: process-review
-    relation: informs
+  - source: storage-server-workspace-v3
+    target: cache-browser-workspace-v2
+    relation: cached_in
 
-  - source: process-review
-    target: object-decision
-    relation: produces
+  - source: record-decomposition-review
+    target: view-decomposition-deliberation
+    relation: opens
 
-  - source: actor-agent
-    target: entry-process-deliberation
-    relation: proposes_in
+  - source: object-action
+    target: view-action-detail
+    relation: opens
 
-  - source: actor-human
-    target: governance-proposal-first
-    relation: authorizes
+  - source: relation-decomposes
+    target: view-relation-deliberation
+    relation: explained_by
 
-  - source: workflow-core-loop
-    target: requirement-map
-    relation: includes
+  - source: relation-goal-dependency
+    target: view-relation-deliberation
+    relation: explained_by
 
-  - source: workflow-core-loop
-    target: requirement-workspace
-    relation: includes
+  - source: relation-action-dependency
+    target: view-relation-deliberation
+    relation: explained_by
 
-  - source: workflow-core-loop
-    target: requirement-deliberation
-    relation: includes
-
-  - source: workflow-core-loop
-    target: requirement-confirmation
-    relation: includes
-
-acceptance_criteria:
-  - "一级工作入口只突出工作图谱和目标工作台。"
-  - "Objective 是唯一递归目标单元，界面不再向用户暴露 Goal、SubGoal 或 Work Unit。"
-  - "目标工作台只呈现当前确认结果，过程推演保存共同工作，版本记录保存确认变化。"
-  - "Agent 提案未经授权确认不得覆盖正式结果。"
-  - "任一正式结论都能追溯到对应过程和版本。"
-  - "依赖、证据、监控和时间线保留为派生视图，但在原型中不与主入口并列。"
+rules:
+  - "有下级 Goal 的组合 Goal 不直接创建 Action。"
+  - "没有下级 Goal 的叶子 Goal 才能创建 Action。"
+  - "依赖方向统一为前置节点指向后续节点。"
+  - "Action 不能自行接受自己的结果。"
+  - "每条 Relation 必须保存理由与推演历史。"
+  - "每个组合 Goal 必须保存整组拆解的完整性与边界推演。"
+  - "Official Reasoning Agent 只生成 Proposal；Human DRI 确认后才写入正式事实。"
+  - "每个 Goal 必须有唯一 Human DRI、开始时间、Deadline 和时区。"
+  - "Web 与 MCP 必须读写同一个服务端 Workspace store。"
+  - "浏览器 v2 快照只在服务端 revision 为 0 时导入，不能覆盖已有服务端事实。"

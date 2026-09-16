@@ -3,7 +3,9 @@ import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import tsconfigPaths from "vite-tsconfig-paths";
 import { traeBadgePlugin } from 'vite-plugin-trae-solo-badge';
-import { runAgent } from "./api/_agent-core";
+import { runAgent, runExecutionAgent } from "./api/_agent-core";
+import { handleMcpRequest } from "./api/_mcp-http";
+import { handleWorkspaceRequest } from "./api/_workspace-http";
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
@@ -14,9 +16,37 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
 }
 
 function localAgentApi(environment: Record<string, string>): Plugin {
+  const agentEnvironment = {
+    apiKey: environment.WORKGRAPH_AI_API_KEY,
+    baseUrl: environment.WORKGRAPH_AI_BASE_URL,
+    model: environment.WORKGRAPH_AI_MODEL,
+  };
+
   return {
-    name: "workgraph-local-agent-api",
+    name: "stepwise-local-api",
     configureServer(server) {
+      server.middlewares.use("/api/workspace", async (request, response) => {
+        const body =
+          request.method === "POST" ? await readJsonBody(request) : undefined;
+        await handleWorkspaceRequest(request, response, body);
+      });
+
+      server.middlewares.use("/api/mcp", async (request, response) => {
+        const body =
+          request.method === "POST" ? await readJsonBody(request) : undefined;
+        await handleMcpRequest(
+          request,
+          response,
+          {
+            writeToken: environment.STEPWISE_MCP_WRITE_TOKEN,
+            allowedOrigins:
+              environment.STEPWISE_MCP_ALLOWED_ORIGINS ??
+              "http://localhost:5173,http://localhost:5174",
+          },
+          body,
+        );
+      });
+
       server.middlewares.use("/api/agent", async (request, response) => {
         response.setHeader("Content-Type", "application/json; charset=utf-8");
         response.setHeader("Cache-Control", "no-store");
@@ -28,15 +58,36 @@ function localAgentApi(environment: Record<string, string>): Plugin {
         }
 
         try {
-          const result = await runAgent(await readJsonBody(request), {
-            apiKey: environment.WORKGRAPH_AI_API_KEY,
-            baseUrl: environment.WORKGRAPH_AI_BASE_URL,
-            model: environment.WORKGRAPH_AI_MODEL,
-          });
+          const result = await runAgent(await readJsonBody(request), agentEnvironment);
           response.statusCode = 200;
           response.end(JSON.stringify(result));
         } catch (error) {
           const message = error instanceof Error ? error.message : "Agent 请求失败";
+          response.statusCode =
+            error instanceof Error && error.name === "ConfigurationError" ? 503 : 400;
+          response.end(JSON.stringify({ error: message }));
+        }
+      });
+
+      server.middlewares.use("/api/run", async (request, response) => {
+        response.setHeader("Content-Type", "application/json; charset=utf-8");
+        response.setHeader("Cache-Control", "no-store");
+
+        if (request.method !== "POST") {
+          response.statusCode = 405;
+          response.end(JSON.stringify({ error: "仅支持 POST" }));
+          return;
+        }
+
+        try {
+          const result = await runExecutionAgent(
+            await readJsonBody(request),
+            agentEnvironment,
+          );
+          response.statusCode = 200;
+          response.end(JSON.stringify(result));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "Agent Run 失败";
           response.statusCode =
             error instanceof Error && error.name === "ConfigurationError" ? 503 : 400;
           response.end(JSON.stringify({ error: message }));

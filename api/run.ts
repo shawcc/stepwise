@@ -1,0 +1,34 @@
+import { runExecutionAgent } from "./_agent-core.js";
+
+type RequestLike = {
+  method?: string;
+  body?: unknown;
+};
+
+type ResponseLike = {
+  status: (code: number) => ResponseLike;
+  json: (value: unknown) => void;
+  setHeader: (name: string, value: string) => void;
+};
+
+export default async function handler(request: RequestLike, response: ResponseLike) {
+  response.setHeader("Cache-Control", "no-store");
+
+  if (request.method !== "POST") {
+    response.status(405).json({ error: "仅支持 POST" });
+    return;
+  }
+
+  try {
+    const result = await runExecutionAgent(request.body, {
+      apiKey: process.env.WORKGRAPH_AI_API_KEY,
+      baseUrl: process.env.WORKGRAPH_AI_BASE_URL,
+      model: process.env.WORKGRAPH_AI_MODEL,
+    });
+    response.status(200).json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Action 执行失败";
+    const status = error instanceof Error && error.name === "ConfigurationError" ? 503 : 400;
+    response.status(status).json({ error: message });
+  }
+}

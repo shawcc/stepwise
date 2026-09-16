@@ -12,9 +12,9 @@ export function AppShell() {
       <main className="grid h-screen grid-cols-1 gap-px bg-slate-200 md:grid-cols-[168px_minmax(0,1fr)]">
         <aside className="bg-white md:flex md:min-h-0 md:flex-col">
           <div className="border-b border-slate-200 px-4 py-3 max-md:hidden">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700">WorkGraph</p>
-            <h1 className="mt-1 truncate text-base font-semibold text-slate-950">Agent 原生工作系统</h1>
-            <p className="mt-1 text-xs text-slate-500">工作事实源 · 权限内图谱</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-700">Stepwise</p>
+            <h1 className="mt-1 truncate text-base font-semibold text-slate-950">Agent 组织运行系统</h1>
+            <p className="mt-1 text-xs text-slate-500">目标驱动 · 逐步执行 · 证据验收</p>
           </div>
 
           <nav className="border-b border-slate-200 p-2">

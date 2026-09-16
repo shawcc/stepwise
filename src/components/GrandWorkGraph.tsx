@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   ArrowRight,
   Bot,
   Check,
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   CircleDot,
@@ -18,15 +20,19 @@ import {
   MessageSquare,
   Network,
   PanelTop,
+  Play,
   RotateCcw,
   Send,
+  ShieldCheck,
   Sparkles,
   UserRound,
   X,
 } from "lucide-react";
 import {
+  requestExecutionAgent,
   requestAgentProposal,
   type AgentProposal,
+  type ExecutionEvidence,
 } from "@/lib/workgraph-agent";
 
 type CanvasStage = "goal" | "conditions" | "path" | "execute" | "verify";
@@ -43,6 +49,8 @@ type WorkspaceVersion = {
 type ThreadEntryKind =
   | "comment"
   | "agent-analysis"
+  | "agent-run"
+  | "evidence"
   | "proposal"
   | "decision"
   | "system";
@@ -55,12 +63,39 @@ type ThreadEntry = {
   createdAt: string;
 };
 
+type AgentRunStatus =
+  | "running"
+  | "review-required"
+  | "accepted"
+  | "redo"
+  | "failed";
+
+type AgentRun = {
+  id: string;
+  goalId: string;
+  action: string;
+  agent: string;
+  riskLevel: "low" | "medium" | "high";
+  approvedBy: string;
+  status: AgentRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  outcome?: string;
+  evidence: ExecutionEvidence[];
+  needsDecision?: boolean;
+  decisionQuestion?: string;
+  decision?: string;
+  provider?: string;
+  error?: string;
+};
+
 type PersistedWorkspace = {
   drafts: StageDrafts;
   confirmedDrafts: string[];
   methodByStage: Record<string, string>;
   versions: WorkspaceVersion[];
   threads: Record<string, ThreadEntry[]>;
+  agentRuns: AgentRun[];
 };
 
 const workspaceStorageKey = "workgraph:mvp-workspace:v4";
@@ -72,12 +107,28 @@ function loadWorkspace(): PersistedWorkspace {
   try {
     const stored = JSON.parse(window.localStorage.getItem(workspaceStorageKey) ?? "null");
     if (!stored || typeof stored !== "object") return demoWorkspace;
+    const migratedStored = JSON.parse(
+      JSON.stringify(stored).split("ReasonOS").join("Stepwise"),
+    );
+    const drafts = { ...(migratedStored.drafts ?? {}) };
+    const threads = { ...(migratedStored.threads ?? {}) };
+    if (
+      ["WorkBuddy", "Nebius"].some((legacyName) =>
+        String(drafts["G0:goal"] ?? "").includes(legacyName),
+      )
+    ) {
+      drafts["G0:goal"] = demoWorkspace.drafts["G0:goal"];
+      threads["G0:goal"] = demoWorkspace.threads["G0:goal"];
+    }
     return {
-      drafts: stored.drafts ?? {},
-      confirmedDrafts: stored.confirmedDrafts ?? [],
-      methodByStage: stored.methodByStage ?? {},
-      versions: stored.versions ?? [],
-      threads: stored.threads ?? {},
+      drafts,
+      confirmedDrafts: migratedStored.confirmedDrafts ?? [],
+      methodByStage: migratedStored.methodByStage ?? {},
+      versions: migratedStored.versions ?? [],
+      threads,
+      agentRuns: JSON.stringify(migratedStored.agentRuns ?? []).includes("Nebius")
+        ? demoWorkspace.agentRuns
+        : (migratedStored.agentRuns ?? demoWorkspace.agentRuns),
     };
   } catch {
     return demoWorkspace;
@@ -124,29 +175,35 @@ type GoalNode = {
   outcome?: string;
   evidence?: string;
   decision?: string;
+  reasoningAgent?: string;
+  executionAgents?: string[];
+  autonomy?: string;
 };
 
 const goals: Record<string, GoalNode> = {
   G0: {
     id: "G0",
-    title: "完成 WorkBuddy AI 大赛参赛",
+    title: "提交 Stepwise 参加 Amazon Developer Hackathon",
     level: 0,
     owner: "林然｜队长",
-    status: "准备中",
-    problem: "小组决定参赛，但官方赛题、截止时间、提交物和评分规则尚未导入系统，当前还不能据此作出不可逆承诺。",
-    objective: "小组在官方截止时间前交付一个可运行、可演示、符合规则且有明确用户价值的 AI 作品，并完成正式提交。",
+    status: "进行中",
+    problem: "Stepwise 已能表达目标与协作过程，但还缺少让 Alexa+ 等外部 Agent 按授权边界读取 Objective、执行 Action 并回填 Evidence 的标准接口。",
+    objective: "在 2026 年 10 月 23 日 12:00 PT 前，为 Stepwise 提供符合 MCP 2025-11-25 的远程协作接口，完成 Amazon Developer Hackathon Alexa+ 赛道作品与正式提交。",
     keyResults: [
-      "官方平台显示提交成功，提交物清单完整且有回执证据",
-      "核心用户场景可以从输入到结果完整运行，评审者无需开发者介入即可体验",
-      "每项官方评分维度都有对应的作品证据；具体维度待导入官方规则后确认",
-      "正式提交前完成一次全流程彩排，所有阻断级问题均已关闭",
+      "线上产品可完成 Objective → Action → Agent Run → Evidence → DRI Decision 闭环",
+      "Alexa+ 模拟体验或兼容客户端可通过 MCP 读取 Objective、创建 Action、回填 Outcome 与 Evidence",
+      "公开仓库包含开源许可证、完整源码、部署与测试说明，评审可独立运行",
+      "Devpost 提交包含可用 Demo、三分钟内英文视频、产品反馈和重大更新说明，并获得提交回执",
     ],
     children: ["G0.1", "G0.2", "G0.3", "G0.4", "G0.5"],
-    initiatives: ["先确认比赛约束与用户问题，再并行推进作品、评审叙事和提交验收。"],
-    actions: ["队长导入官方规则并主持目标确认会；各负责人在自己的下级 Objective 中推进工作。"],
-    outcome: "小组已形成参赛目标和五项责任边界，官方规则与最终截止时间仍待补充。",
-    evidence: "模拟记录：目标确认版本、责任分工和待确认问题已写入本演示工作台；不代表真实比赛规则。",
-    decision: "在官方规则进入系统前，只推进可逆的调研和原型工作，不锁定最终赛题与提交方案。",
+    initiatives: ["用 Stepwise 驱动 Stepwise 的参赛开发，只补齐一条真实运行闭环及提交必需能力。"],
+    actions: ["工程 Agent 实现运行闭环；规则 Agent 维护官方约束；DRI 决定范围、授权和最终提交。"],
+    outcome: "已完成替代赛事选择、官方规则核验和 DRI/Agent 责任模型；MCP 远程协作接口正在补齐。",
+    evidence: "官方赛事页与规则页已核验；现有 DRI 重构已通过 lint、TypeScript 检查、生产构建和本地界面验证。",
+    decision: "参加 Amazon Developer Hackathon 的 Alexa+ 赛道；以 Stepwise MCP 和 Web 模拟体验展示跨 Agent 目标协作。",
+    reasoningAgent: "参赛策略 Agent",
+    executionAgents: ["规则 Agent", "洞察 Agent", "工程 Agent", "演示 Agent", "质量 Agent"],
+    autonomy: "Agent 可自主推进可逆调研、分析与原型；赛题、范围、预算、正式提交和验收由 DRI 决策。",
   },
   "G0.1": {
     id: "G0.1",
@@ -155,16 +212,22 @@ const goals: Record<string, GoalNode> = {
     parentId: "G0",
     relation: "N1 · 必要条件",
     owner: "林然｜队长",
-    status: "进行中",
-    problem: "团队尚未拥有经过核验的官方规则、时间节点和提交要求。",
-    objective: "建立唯一可信的比赛约束清单，并据此确定参赛方向、节奏和风险边界。",
+    status: "已确认",
+    problem: "比赛要求、时间节点与已有项目资格需要形成可追溯的约束基线。",
+    objective: "建立 Amazon Developer Hackathon 的唯一可信约束清单，并据此确定 Alexa+ 参赛路径、节奏和风险边界。",
     keyResults: [
-      "规则、赛程、资格、提交物和评分维度均链接官方来源并由队长确认",
-      "所有关键时间点都有负责人和内部提前量",
+      "规则、赛程、资格、提交物和评分维度均链接官方来源并由 DRI 确认",
+      "最终提交时间固定为 2026 年 10 月 23 日 12:00 PT，并设置内部提前量",
     ],
     children: ["G0.1.1", "G0.1.2"],
     initiatives: ["集中收集官方材料，建立规则核验表和参赛决策记录。"],
-    actions: ["规则 Agent 提取候选条款，队长逐条核验来源并确认。"],
+    actions: ["规则 Agent 持续检查官方更新；DRI 确认参赛资格、赛道与不可逆提交动作。"],
+    outcome: "已确认中国大陆个人可参赛、已有项目可在赛期内重大更新；Alexa+ 接受 Agent Skill、自建 MCP 或可运行的 Web 模拟体验。",
+    evidence: "https://amazonappdev2026.devpost.com/；https://amazonappdev2026.devpost.com/rules",
+    decision: "选择 Alexa+ 赛道，以 Stepwise MCP 与 Web 产品共同构成参赛项目。",
+    reasoningAgent: "规则推理 Agent",
+    executionAgents: ["规则采集 Agent"],
+    autonomy: "可自主收集和比对公开规则；资格判断、冲突条款与时间承诺升级给 DRI。",
   },
   "G0.2": {
     id: "G0.2",
@@ -184,6 +247,9 @@ const goals: Record<string, GoalNode> = {
     children: ["G0.2.1", "G0.2.2"],
     initiatives: ["并行验证候选问题，再用用户价值、AI 必要性和交付可行性进行取舍。"],
     actions: ["产品负责人组织访谈；洞察 Agent 汇总证据并反驳弱命题。"],
+    reasoningAgent: "用户洞察 Agent",
+    executionAgents: ["访谈分析 Agent", "机会反证 Agent"],
+    autonomy: "可自主整理证据、提出候选命题；最终命题和范围冻结由 DRI 决策。",
   },
   "G0.3": {
     id: "G0.3",
@@ -192,17 +258,20 @@ const goals: Record<string, GoalNode> = {
     parentId: "G0",
     relation: "N3 · 必要条件",
     owner: "陈默｜工程",
-    status: "待启动",
-    problem: "尚未确定最终命题，因此技术方案、核心链路和质量基线都未冻结。",
-    objective: "交付覆盖核心场景、AI 能力真实生效、在演示环境稳定运行的参赛作品。",
+    status: "进行中",
+    problem: "现有闭环只在浏览器内部运行，Alexa+ 或其他外部 Agent 无法按统一协议参与。",
+    objective: "交付符合 MCP 2025-11-25、保留 DRI 授权边界并可稳定演示的 Stepwise 远程协作接口。",
     keyResults: [
-      "核心流程在目标演示环境连续运行 10 次无阻断失败",
-      "AI 输出有来源或质量检查，关键失败有清晰降级路径",
-      "部署地址、演示账号和恢复方案均通过非开发成员验证",
+      "MCP 客户端可完成初始化、工具发现、Objective 读取和完整 Action 验收链路",
+      "未授权写入、错误状态迁移和非法输入均返回可执行错误",
+      "部署地址、演示流程和恢复方案均通过非开发成员验证",
     ],
     children: ["G0.3.1", "G0.3.2"],
-    initiatives: ["先做端到端最小闭环，再提高 AI 质量、可靠性和可演示性。"],
-    actions: ["工程负责人搭建骨架；AI Agent 实现推理链路；测试 Agent 持续回归。"],
+    initiatives: ["先实现无会话 Streamable HTTP MCP，再接入 Alexa+ 模拟体验并提高可演示性。"],
+    actions: ["工程负责人实现 MCP 数据面；测试 Agent 验证协议、权限和状态迁移。"],
+    reasoningAgent: "技术方案 Agent",
+    executionAgents: ["开发 Agent", "测试 Agent"],
+    autonomy: "可在已确认架构和测试边界内自主实现；架构变更、数据风险和不可逆操作升级给 DRI。",
   },
   "G0.4": {
     id: "G0.4",
@@ -222,6 +291,9 @@ const goals: Record<string, GoalNode> = {
     children: ["G0.4.1", "G0.4.2"],
     initiatives: ["从评审问题倒推演示结构，让每个主张都连接产品画面或证据。"],
     actions: ["设计负责人制作叙事板；演示 Agent 检查信息密度、时长和证据缺口。"],
+    reasoningAgent: "评审叙事 Agent",
+    executionAgents: ["设计 Agent", "演示检查 Agent"],
+    autonomy: "可自主生成和校验材料草稿；核心价值主张与最终对外表述由 DRI 决策。",
   },
   "G0.5": {
     id: "G0.5",
@@ -241,6 +313,9 @@ const goals: Record<string, GoalNode> = {
     children: ["G0.5.1", "G0.5.2"],
     initiatives: ["建立提交清单和冻结机制，由未直接开发对应模块的成员交叉验收。"],
     actions: ["质量负责人维护验收清单；队长执行最终 go/no-go 决策。"],
+    reasoningAgent: "验收审查 Agent",
+    executionAgents: ["回归 Agent", "提交检查 Agent"],
+    autonomy: "可自主执行检查和整理证据；风险接受、版本冻结与正式提交必须由 DRI 决策。",
   },
   "G0.1.1": {
     id: "G0.1.1",
@@ -249,11 +324,14 @@ const goals: Record<string, GoalNode> = {
     parentId: "G0.1",
     relation: "N1.1 · 必要条件",
     owner: "规则 Agent + 林然",
-    status: "待补材料",
-    problem: "当前演示没有官方规则原文，不能真实填写资格、赛程和评审标准。",
+    status: "已核验",
+    problem: "需要把官方规则从网页信息转化为可执行、可追溯的约束。",
     objective: "把官方规则转成带来源、状态和责任人的可执行约束清单。",
     keyResults: ["每条关键规则可定位到官方来源，模糊或冲突条款有明确待确认人"],
     children: [],
+    outcome: "已核验参赛资格、技术要求、提交物、评审标准和时间节点。",
+    evidence: "官方 Overview 与 Official Rules；核验日期 2026-09-14。",
+    decision: "规则基线可用于倒排开发；正式提交前再次检查官方更新。",
   },
   "G0.1.2": {
     id: "G0.1.2",
@@ -262,8 +340,8 @@ const goals: Record<string, GoalNode> = {
     parentId: "G0.1",
     relation: "N1.2 · 必要条件",
     owner: "林然｜队长",
-    status: "待规则确认",
-    problem: "缺少可信截止时间和提交要求，无法倒排冻结点和内部检查点。",
+    status: "进行中",
+    problem: "官方截止时间已确认，但内部冻结点、演示验收和提交预演尚未排定。",
     objective: "建立包含内部提前量、决策门和退出条件的参赛计划。",
     keyResults: ["每个不可逆节点至少有一次提前检查，关键风险有责任人和触发条件"],
     children: [],
@@ -296,28 +374,28 @@ const goals: Record<string, GoalNode> = {
   },
   "G0.3.1": {
     id: "G0.3.1",
-    title: "跑通端到端 MVP",
+    title: "跑通 Stepwise MCP",
     level: 2,
     parentId: "G0.3",
     relation: "N3.1 · 必要条件",
     owner: "陈默｜工程",
-    status: "待启动",
-    problem: "当前没有围绕最终命题的可运行产品。",
-    objective: "以最短路径让目标用户完成一次完整核心任务。",
-    keyResults: ["从输入到结果的主链路可部署运行，关键状态可观察，失败可恢复"],
+    status: "进行中",
+    problem: "外部 Agent 还不能通过标准协议进入 Stepwise 的目标与执行闭环。",
+    objective: "让 MCP 客户端完成 Objective 读取、Action 授权、Outcome 回填和 DRI Decision。",
+    keyResults: ["初始化、工具发现、读取与写入链路均可复现，非法状态和无凭证写入被拒绝"],
     children: [],
   },
   "G0.3.2": {
     id: "G0.3.2",
-    title: "验证 AI 质量与必要性",
+    title: "验证 Alexa+ 协作体验",
     level: 2,
     parentId: "G0.3",
     relation: "N3.2 · 必要条件",
     owner: "AI Agent + 陈默",
     status: "待启动",
-    problem: "尚未证明 AI 相比规则或人工流程带来不可替代的价值。",
-    objective: "用代表性样例验证 AI 输出质量、稳定性和对核心价值的贡献。",
-    keyResults: ["建立代表性测试集、质量判断规则和失败案例，结果可重复复核"],
+    problem: "协议可调用不等于用户能理解外部 Agent 如何与 Human DRI 共同推进目标。",
+    objective: "用 Alexa+ 模拟体验展示 Agent 提案、受权执行、证据回填和人类验收的完整分工。",
+    keyResults: ["三分钟演示中能看清 Agent 做了什么、为何需要授权、Evidence 如何影响 DRI Decision"],
     children: [],
   },
   "G0.4.1": {
@@ -376,15 +454,15 @@ const goals: Record<string, GoalNode> = {
 
 function createDemoWorkspace(): PersistedWorkspace {
   const rootDraft = [
-    "Objective：完成 WorkBuddy AI 大赛参赛",
-    "目标描述：小组在官方截止时间前交付一个可运行、可演示、符合规则且有明确用户价值的 AI 作品，并完成正式提交。",
-    "KR1：官方平台显示提交成功，提交物清单完整且有回执证据",
-    "KR2：核心用户场景可以从输入到结果完整运行，评审者无需开发者介入即可体验",
-    "KR3：每项官方评分维度都有对应的作品证据；具体维度待导入官方规则后确认",
-    "KR4：正式提交前完成一次全流程彩排，所有阻断级问题均已关闭",
-    "待确认：官方赛题、截止时间、资格、提交格式和评分维度。",
+    "Objective：提交 Stepwise 参加 Amazon Developer Hackathon",
+    "目标描述：在 2026 年 10 月 23 日 12:00 PT 前，为 Stepwise 提供符合 MCP 2025-11-25 的远程协作接口，完成 Alexa+ 赛道作品与正式提交。",
+    "KR1：线上产品可完成 Objective → Action → Agent Run → Evidence → DRI Decision 闭环",
+    "KR2：Alexa+ 模拟体验或兼容客户端可通过 MCP 读取 Objective、创建 Action、回填 Outcome 与 Evidence",
+    "KR3：公开仓库包含开源许可证、完整源码、部署与测试说明，评审可独立运行",
+    "KR4：Devpost 提交包含可用 Demo、三分钟内英文视频、产品反馈和重大更新说明，并获得提交回执",
+    "范围：只建设 Alexa+ 参赛闭环所需的 MCP、模拟体验和提交材料，暂缓通用连接器与组织级权限。",
   ].join("\n");
-  const savedAt = "2026-08-18T10:30:00.000Z";
+  const savedAt = "2026-09-14T13:55:00.000Z";
 
   return {
     drafts: { "G0:goal": rootDraft },
@@ -397,32 +475,62 @@ function createDemoWorkspace(): PersistedWorkspace {
           id: "demo-1",
           kind: "comment",
           actor: "林然｜队长",
-          content: "模拟讨论：先把参赛目标定清楚。官方规则还没有导入，不要猜截止时间和评分标准。",
-          createdAt: "2026-08-18T10:00:00.000Z",
+          content: "先寻找比 Kaggriculture 更适合的比赛，重点解决周期太短和领域干扰问题。",
+          createdAt: "2026-09-14T13:20:00.000Z",
         },
         {
           id: "demo-2",
           kind: "agent-analysis",
-          actor: "Objective & KR Agent",
-          content: "当前目标需要同时区分提交完成、作品可用、规则匹配和赛前质量四类成功标准。官方信息缺失应作为待确认约束，而不是写成事实。",
-          createdAt: "2026-08-18T10:10:00.000Z",
+          actor: "参赛策略 Agent",
+          content: "Amazon Developer Hackathon 允许中国大陆个人参赛和已有项目重大更新；Alexa+ 赛道接受自建 MCP 或 Web 模拟体验，直接验证 Stepwise 的 Agent 协作边界。",
+          createdAt: "2026-09-14T13:35:00.000Z",
         },
         {
           id: "demo-3",
           kind: "proposal",
-          actor: "Objective & KR Agent",
+          actor: "参赛策略 Agent",
           content: rootDraft,
-          createdAt: "2026-08-18T10:20:00.000Z",
+          createdAt: "2026-09-14T13:45:00.000Z",
         },
         {
           id: "demo-4",
           kind: "decision",
           actor: "林然｜队长",
-          content: "模拟决策：确认目标框架；官方规则相关字段保持待确认。团队可以先推进可逆的用户调研和技术探索。",
+          content: "确认参加 Amazon Developer Hackathon Alexa+ 赛道，以 Stepwise MCP 的真实协议闭环作为核心重大更新。",
           createdAt: savedAt,
         },
       ],
     },
+    agentRuns: [
+      {
+        id: "run-competition-selection",
+        goalId: "G0",
+        action: "筛选并核验更适合验证 Stepwise 的真实 AI Agent 比赛",
+        agent: "参赛策略 Agent",
+        riskLevel: "low",
+        approvedBy: "林然｜队长",
+        status: "accepted",
+        startedAt: "2026-09-14T13:20:00.000Z",
+        completedAt: "2026-09-14T13:55:00.000Z",
+        outcome: "核验国内外仍开放赛事及参赛限制后，停止 Nebius 接入，选择 Amazon Developer Hackathon Alexa+ 赛道。",
+        evidence: [
+          {
+            label: "官方赛事页",
+            detail: "赛事 Alexa+ 赛道接受 Agent Skill、自建 MCP 或 Web 模拟体验，提交截止为 2026 年 10 月 23 日 12:00 PT。",
+            kind: "observation",
+            source: "https://amazonappdev2026.devpost.com/",
+          },
+          {
+            label: "官方规则",
+            detail: "允许个人或团队参赛，已有项目可在赛期内重大更新后提交。",
+            kind: "observation",
+            source: "https://amazonappdev2026.devpost.com/rules",
+          },
+        ],
+        decision: "DRI 已接受结果，并将 Alexa+ 参赛路径写入根 Objective。",
+        provider: "TRAE research run",
+      },
+    ],
   };
 }
 
@@ -432,6 +540,30 @@ function formatKeyResults(goal: GoalNode): string {
   return goal.keyResults
     .map((result, index) => `KR${index + 1}：${result}`)
     .join("\n");
+}
+
+function getHumanDri(goal: GoalNode): string {
+  const humanOwner = goal.owner
+    .split("+")
+    .map((owner) => owner.trim())
+    .find((owner) => !owner.toLowerCase().includes("agent"));
+  return humanOwner ?? goal.owner;
+}
+
+function getReasoningAgent(goal: GoalNode): string {
+  return goal.reasoningAgent ?? stageAgentMeta.goal.name;
+}
+
+function getExecutionAgents(goal: GoalNode): string[] {
+  if (goal.executionAgents?.length) return goal.executionAgents;
+  return [`${goal.title}执行 Agent`];
+}
+
+function getAutonomyPolicy(goal: GoalNode): string {
+  return (
+    goal.autonomy ??
+    "Agent 可在已确认目标、权限与可逆边界内自主推进；越权、高影响、不可逆或证据冲突时升级给 DRI。"
+  );
 }
 
 function getConditionRows(goal: GoalNode): string[][] {
@@ -592,6 +724,9 @@ export function GrandWorkGraph() {
   const [threads, setThreads] = useState<Record<string, ThreadEntry[]>>(
     persistedWorkspace.threads,
   );
+  const [agentRuns, setAgentRuns] = useState<AgentRun[]>(
+    persistedWorkspace.agentRuns,
+  );
   const [threadOpen, setThreadOpen] = useState(true);
 
   const focused = goals[focusedId] ?? goals.G0;
@@ -614,6 +749,7 @@ export function GrandWorkGraph() {
   const currentVersions = versions.filter(
     (version) => version.key === collaborationKey,
   );
+  const currentAgentRuns = agentRuns.filter((run) => run.goalId === focused.id);
   const threadEntries = threads[collaborationKey] ?? [];
   const threadEntriesByStage = Object.fromEntries(
     canvasStages.map((stage) => [
@@ -637,9 +773,10 @@ export function GrandWorkGraph() {
         methodByStage,
         versions,
         threads,
+        agentRuns,
       }),
     );
-  }, [confirmedDrafts, drafts, methodByStage, threads, versions]);
+  }, [agentRuns, confirmedDrafts, drafts, methodByStage, threads, versions]);
 
   const appendThreadEntry = (
     key: string,
@@ -689,7 +826,7 @@ export function GrandWorkGraph() {
     appendThreadEntry(
       collaborationKey,
       "comment",
-      "你",
+      getHumanDri(focused),
       requestedChange,
     );
     setAgentLoadingKey(collaborationKey);
@@ -703,6 +840,10 @@ export function GrandWorkGraph() {
           problem: focused.problem,
           objective: focused.objective,
           acceptance: formatKeyResults(focused),
+          dri: getHumanDri(focused),
+          reasoningAgent: getReasoningAgent(focused),
+          executionAgents: getExecutionAgents(focused),
+          autonomy: getAutonomyPolicy(focused),
           parent: parent ? `${parent.id} ${parent.title}` : undefined,
           children: focused.children.map((id) => ({
             id,
@@ -727,13 +868,13 @@ export function GrandWorkGraph() {
       appendThreadEntry(
         collaborationKey,
         "agent-analysis",
-        stageAgentMeta[activeStage].name,
+        getReasoningAgent(focused),
         proposal.rationale,
       );
       appendThreadEntry(
         collaborationKey,
         "proposal",
-        stageAgentMeta[activeStage].name,
+        getReasoningAgent(focused),
         proposal.proposedDraft,
       );
     } catch (error) {
@@ -769,8 +910,135 @@ export function GrandWorkGraph() {
     appendThreadEntry(
       collaborationKey,
       "decision",
-      "你",
-      "已确认当前提案并写入目标文档，系统生成了一个新版本。",
+      getHumanDri(focused),
+      "DRI 已确认当前提案并写入目标文档，系统生成了一个新版本。",
+    );
+  };
+
+  const startAgentRun = async (
+    action: string,
+    agent: string,
+    riskLevel: AgentRun["riskLevel"],
+  ) => {
+    const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const approvedBy = getHumanDri(focused);
+    const run: AgentRun = {
+      id: runId,
+      goalId: focused.id,
+      action,
+      agent,
+      riskLevel,
+      approvedBy,
+      status: "running",
+      startedAt: new Date().toISOString(),
+      evidence: [],
+    };
+    setAgentRuns((current) => [run, ...current]);
+    appendThreadEntry(
+      `${focused.id}:execute`,
+      "agent-run",
+      agent,
+      `已由 ${approvedBy} 授权运行：${action}`,
+    );
+
+    try {
+      const parent = focused.parentId ? goals[focused.parentId] : undefined;
+      const response = await requestExecutionAgent({
+        goal: {
+          id: focused.id,
+          title: focused.title,
+          problem: focused.problem,
+          objective: focused.objective,
+          acceptance: formatKeyResults(focused),
+          dri: approvedBy,
+          reasoningAgent: getReasoningAgent(focused),
+          executionAgents: getExecutionAgents(focused),
+          autonomy: getAutonomyPolicy(focused),
+          parent: parent ? `${parent.id} ${parent.title}` : undefined,
+          children: focused.children.map((id) => ({
+            id,
+            title: goals[id].title,
+            relation: goals[id].relation,
+          })),
+        },
+        action,
+        agent,
+        riskLevel,
+        approvedBy,
+        context: canvasStages
+          .map((stage) => {
+            const key = `${focused.id}:${stage.id}`;
+            return drafts[key] ?? getInitialDraft(focused, stage.id);
+          })
+          .join("\n\n---\n\n"),
+      });
+
+      setAgentRuns((current) =>
+        current.map((item) =>
+          item.id === runId
+            ? {
+                ...item,
+                status: "review-required",
+                completedAt: new Date().toISOString(),
+                outcome: response.outcome,
+                evidence: response.evidence,
+                needsDecision: response.needsDecision,
+                decisionQuestion: response.decisionQuestion,
+                provider: response.provider,
+              }
+            : item,
+        ),
+      );
+      appendThreadEntry(
+        `${focused.id}:execute`,
+        "evidence",
+        agent,
+        `${response.outcome}\n\nEvidence：${response.evidence
+          .map((item) => item.label)
+          .join("、") || "无"}`,
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Agent Run 失败";
+      setAgentRuns((current) =>
+        current.map((item) =>
+          item.id === runId
+            ? {
+                ...item,
+                status: "failed",
+                completedAt: new Date().toISOString(),
+                error: message,
+              }
+            : item,
+        ),
+      );
+      appendThreadEntry(
+        `${focused.id}:execute`,
+        "system",
+        "系统",
+        `Agent Run 失败：${message}`,
+      );
+    }
+  };
+
+  const decideAgentRun = (runId: string, decision: "accepted" | "redo") => {
+    const run = agentRuns.find((item) => item.id === runId);
+    if (!run) return;
+    const decisionText =
+      decision === "accepted"
+        ? "DRI 已接受本次结果，Evidence 进入 Objective 验收上下文。"
+        : "DRI 要求重做，本次结果保留为历史证据，不作为当前结论。";
+    setAgentRuns((current) =>
+      current.map((item) =>
+        item.id === runId
+          ? { ...item, status: decision, decision: decisionText }
+          : item,
+      ),
+    );
+    appendThreadEntry(
+      `${focused.id}:verify`,
+      "decision",
+      getHumanDri(focused),
+      `${decisionText}\nAction：${run.action}`,
     );
   };
 
@@ -784,14 +1052,14 @@ export function GrandWorkGraph() {
 
       <section
         aria-label={`工作图谱${workspaceViews.find((view) => view.id === workspaceView)?.label ?? ""}视图`}
-        className="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-4"
+        className="relative min-h-0 flex-1 overflow-auto bg-slate-100 p-2 sm:p-4"
         style={{
           backgroundImage:
             "radial-gradient(circle, rgba(100,116,139,.18) 1px, transparent 1px)",
           backgroundSize: "20px 20px",
         }}
       >
-        <div className="flex min-w-[820px] items-start gap-3">
+        <div className="flex min-w-0 items-start gap-2 sm:gap-3">
           <div className="min-w-0 flex-1">
             {workspaceView === "map" ? (
               <GoalMapView
@@ -839,6 +1107,7 @@ export function GrandWorkGraph() {
               threadEntries={threadEntries}
               threadOpen={threadOpen}
               versions={currentVersions}
+              agentRuns={currentAgentRuns}
               onStageChange={(stage) =>
                 setStageByGoal((current) => ({ ...current, [focused.id]: stage }))
               }
@@ -895,6 +1164,7 @@ export function GrandWorkGraph() {
                 );
               }}
               onConfirmDraft={confirmDraft}
+              onDecideAgentRun={decideAgentRun}
               onDraftChange={(value) => {
                 setDrafts((current) => ({ ...current, [collaborationKey]: value }));
                 setConfirmedDrafts((current) =>
@@ -908,6 +1178,9 @@ export function GrandWorkGraph() {
                 );
               }}
               onReview={toggleReviewed}
+              onStartAgentRun={(action, agent, riskLevel) => {
+                void startAgentRun(action, agent, riskLevel);
+              }}
               onSelectChild={setSelectedChildId}
               onThreadClose={() => setThreadOpen(false)}
               onThreadOpen={() => setThreadOpen(true)}
@@ -955,13 +1228,16 @@ function CanvasToolbar({
           </div>
         </div>
 
-        <nav aria-label="当前目标层级" className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
+        <nav
+          aria-label="当前目标层级"
+          className="order-3 flex w-full min-w-0 items-center gap-1 sm:order-none sm:w-auto sm:flex-1 sm:flex-wrap"
+        >
           {path.map((node, index) => (
-            <div className="flex items-center gap-1" key={node.id}>
+            <div className="flex min-w-0 flex-1 items-center gap-1 sm:flex-none" key={node.id}>
               {index > 0 ? <ChevronRight className="h-4 w-4 text-slate-300" /> : null}
               <button
                 aria-current={node.id === focused.id ? "page" : undefined}
-                className={`rounded-md px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
+                className={`min-w-0 flex-1 rounded-md px-3 py-2 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 sm:flex-none ${
                   node.id === focused.id
                     ? "bg-cyan-50 text-cyan-950 ring-1 ring-cyan-200"
                     : "text-slate-500 hover:bg-slate-100 hover:text-slate-950"
@@ -970,16 +1246,16 @@ function CanvasToolbar({
                 type="button"
               >
                 <span className="block font-mono text-[8px] font-bold text-cyan-700">{node.id}</span>
-                <span className="block max-w-52 truncate text-xs font-semibold">{node.title}</span>
+                <span className="block truncate text-xs font-semibold sm:max-w-52">{node.title}</span>
               </button>
             </div>
           ))}
         </nav>
 
-        <label className="relative">
+        <label className="relative order-4 w-full sm:order-none sm:w-auto">
           <span className="sr-only">跳转到指定目标</span>
           <select
-            className="h-9 max-w-72 appearance-none truncate rounded-md border border-slate-300 bg-white pl-3 pr-8 text-xs font-medium text-slate-700 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-100"
+            className="h-9 w-full appearance-none truncate rounded-md border border-slate-300 bg-white pl-3 pr-8 text-xs font-medium text-slate-700 focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-100 sm:max-w-72"
             onChange={(event) => onFocus(event.target.value)}
             value={focused.id}
           >
@@ -1005,7 +1281,7 @@ function ViewRail({
   onChange: (view: WorkspaceView) => void;
 }) {
   return (
-    <aside className="sticky top-0 w-16 shrink-0 rounded-lg border border-slate-300 bg-white shadow-sm">
+    <aside className="sticky top-0 hidden w-16 shrink-0 rounded-lg border border-slate-300 bg-white shadow-sm sm:block">
       <p className="border-b border-slate-200 py-2 text-center text-[8px] font-semibold uppercase tracking-[0.1em] text-slate-400">
         视图
       </p>
@@ -1247,7 +1523,16 @@ function MapGoalNode({
         </p>
       </button>
       <div className="flex items-center justify-between gap-2 border-t border-slate-100 px-3 py-2">
-        <span className="truncate text-[9px] text-slate-400">{goal.owner}</span>
+        <div className="min-w-0">
+          <p className="truncate text-[9px] font-semibold text-slate-600">
+            DRI · {getHumanDri(goal)}
+          </p>
+          {!small ? (
+            <p className="mt-0.5 truncate text-[8px] text-slate-400">
+              Agent · {getReasoningAgent(goal)}
+            </p>
+          ) : null}
+        </div>
         <div className="flex items-center gap-2">
           {!root ? (
             <button
@@ -1278,9 +1563,9 @@ function MapGoalNode({
 
 function GoalStatus({ status }: { status: string }) {
   const tone =
-    status === "原型已实现"
+    status === "原型已实现" || status === "已确认" || status === "已核验"
       ? "bg-emerald-100 text-emerald-700"
-      : status === "开发中"
+      : status === "开发中" || status === "进行中"
         ? "bg-blue-100 text-blue-700"
       : status === "待确认"
         ? "bg-amber-100 text-amber-800"
@@ -1766,6 +2051,7 @@ function ViewStatusBar({
 function GoalCanvas({
   focused,
   activeStage,
+  agentRuns,
   agentError,
   agentLoading,
   agentProposal,
@@ -1787,11 +2073,13 @@ function GoalCanvas({
   onApplySuggestion,
   onAskAgent,
   onConfirmDraft,
+  onDecideAgentRun,
   onDraftChange,
   onMethodChange,
   onRedo,
   onReview,
   onSelectChild,
+  onStartAgentRun,
   onStageChange,
   onThreadClose,
   onThreadOpen,
@@ -1799,6 +2087,7 @@ function GoalCanvas({
 }: {
   focused: GoalNode;
   activeStage: CanvasStage;
+  agentRuns: AgentRun[];
   agentError: string;
   agentLoading: boolean;
   agentProposal?: AgentProposal;
@@ -1820,11 +2109,17 @@ function GoalCanvas({
   onApplySuggestion: () => void;
   onAskAgent: () => void;
   onConfirmDraft: () => void;
+  onDecideAgentRun: (runId: string, decision: "accepted" | "redo") => void;
   onDraftChange: (value: string) => void;
   onMethodChange: (methodId: string) => void;
   onRedo: () => void;
   onReview: () => void;
   onSelectChild: (id: string) => void;
+  onStartAgentRun: (
+    action: string,
+    agent: string,
+    riskLevel: AgentRun["riskLevel"],
+  ) => void;
   onStageChange: (stage: CanvasStage) => void;
   onThreadClose: () => void;
   onThreadOpen: () => void;
@@ -1837,7 +2132,7 @@ function GoalCanvas({
 
   return (
     <article className="relative overflow-hidden rounded-lg border border-slate-300 bg-white shadow-[0_14px_40px_rgba(15,23,42,.08)]">
-      <header className="border-b border-slate-200 px-8 py-7">
+      <header className="border-b border-slate-200 px-4 py-5 sm:px-8 sm:py-7">
         <div className="flex flex-wrap items-start justify-between gap-5">
           <div className="min-w-0 max-w-4xl">
             <div className="flex flex-wrap items-center gap-2 text-[10px] font-semibold text-slate-400">
@@ -1862,7 +2157,9 @@ function GoalCanvas({
             )}
           </div>
           <div className="flex items-center gap-2 text-[10px]">
-            <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-slate-600">{focused.owner}</span>
+            <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 font-semibold text-slate-700">
+              DRI · {getHumanDri(focused)}
+            </span>
             <span className="rounded bg-slate-950 px-2 py-1 font-semibold text-white">{focused.status}</span>
             <button
               className="inline-flex min-h-8 items-center gap-1.5 rounded border border-slate-300 bg-white px-2.5 py-1 font-semibold text-slate-700 hover:border-cyan-500 hover:text-cyan-800"
@@ -1877,18 +2174,22 @@ function GoalCanvas({
             </button>
           </div>
         </div>
+        <ObjectiveGovernanceBar focused={focused} />
       </header>
 
       <div className="grid lg:grid-cols-[190px_minmax(0,1fr)]">
         <ObjectiveDocumentOutline activeStage={activeStage} onChange={onStageChange} />
-        <div className="min-w-0 px-8 py-7">
+        <div className="min-w-0 px-4 py-5 sm:px-8 sm:py-7">
           <ObjectivePlainTextOutline focused={focused} />
           <ObjectiveDocumentBody
             activeStage={activeStage}
+            agentRuns={agentRuns}
             conditions={conditionsForGoal}
             focused={focused}
             onReview={onReview}
+            onDecideAgentRun={onDecideAgentRun}
             onSelectChild={onSelectChild}
+            onStartAgentRun={onStartAgentRun}
             onStageChange={onStageChange}
             onThreadOpen={(stage, anchor) => {
               onStageChange(stage);
@@ -1971,6 +2272,41 @@ function ObjectiveDocumentOutline({
   );
 }
 
+function ObjectiveGovernanceBar({ focused }: { focused: GoalNode }) {
+  const executionAgents = getExecutionAgents(focused);
+  return (
+    <section
+      aria-label="Objective 协作责任"
+      className="mt-5 grid divide-y divide-slate-200 border-y border-slate-200 sm:grid-cols-[1fr_1fr_1.2fr] sm:divide-x sm:divide-y-0"
+    >
+      <div className="flex items-start gap-2 py-3 sm:pr-4">
+        <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-slate-700" />
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase text-slate-400">Human DRI · 结果责任</p>
+          <p className="mt-1 truncate text-xs font-semibold text-slate-900">{getHumanDri(focused)}</p>
+          <p className="mt-0.5 text-[10px] leading-4 text-slate-500">定义目标、授权边界与最终验收</p>
+        </div>
+      </div>
+      <div className="flex items-start gap-2 py-3 sm:px-4">
+        <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-cyan-700" />
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase text-slate-400">Reasoning Agent · 推理</p>
+          <p className="mt-1 truncate text-xs font-semibold text-slate-900">{getReasoningAgent(focused)}</p>
+          <p className="mt-0.5 text-[10px] leading-4 text-slate-500">分析条件、生成工作与提出决策请求</p>
+        </div>
+      </div>
+      <div className="flex items-start gap-2 py-3 sm:pl-4">
+        <Bot className="mt-0.5 h-4 w-4 shrink-0 text-violet-700" />
+        <div className="min-w-0">
+          <p className="text-[9px] font-semibold uppercase text-slate-400">Execution Agent · 执行</p>
+          <p className="mt-1 truncate text-xs font-semibold text-slate-900">{executionAgents.join(" · ")}</p>
+          <p className="mt-0.5 line-clamp-2 text-[10px] leading-4 text-slate-500">{getAutonomyPolicy(focused)}</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ObjectivePlainTextOutline({ focused }: { focused: GoalNode }) {
   const childCount = focused.children.length;
   return (
@@ -1999,12 +2335,15 @@ type ObjectiveWorkFacts = {
 
 function ObjectiveDocumentBody({
   activeStage,
+  agentRuns,
   conditions,
   focused,
   reviewed,
   selectedChildId,
+  onDecideAgentRun,
   onReview,
   onSelectChild,
+  onStartAgentRun,
   onStageChange,
   onThreadOpen,
   onZoom,
@@ -2013,12 +2352,19 @@ function ObjectiveDocumentBody({
   workFacts,
 }: {
   activeStage: CanvasStage;
+  agentRuns: AgentRun[];
   conditions: string[][];
   focused: GoalNode;
   reviewed: boolean;
   selectedChildId: string | null;
+  onDecideAgentRun: (runId: string, decision: "accepted" | "redo") => void;
   onReview: () => void;
   onSelectChild: (id: string) => void;
+  onStartAgentRun: (
+    action: string,
+    agent: string,
+    riskLevel: AgentRun["riskLevel"],
+  ) => void;
   onStageChange: (stage: CanvasStage) => void;
   onThreadOpen: (stage: CanvasStage, anchor?: string) => void;
   onZoom: (id: string) => void;
@@ -2157,10 +2503,17 @@ function ObjectiveDocumentBody({
         onThreadOpen={() => onThreadOpen("execute", "Execution｜执行与实际结果")}
         threadCount={threadCountByStage.execute}
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <DocumentFact label="执行主体" value={focused.owner} />
-          <DocumentFact label="治理边界" value={focused.status === "待确认" ? "等待人类决策" : "权限内推进，越权或不可逆时升级"} />
+        <div className="grid gap-3 sm:grid-cols-3">
+          <DocumentFact label="Human DRI｜结果责任" value={getHumanDri(focused)} />
+          <DocumentFact label="Execution Agent｜执行主体" value={getExecutionAgents(focused).join("、")} />
+          <DocumentFact label="授权与升级边界" value={getAutonomyPolicy(focused)} />
         </div>
+        <ExecutionRunPanel
+          focused={focused}
+          onDecide={onDecideAgentRun}
+          onStart={onStartAgentRun}
+          runs={agentRuns}
+        />
         <DocumentRelation
           label="Outcome｜实际结果"
           onThreadOpen={() => onThreadOpen("execute", `Outcome｜${workFacts.outcome}`)}
@@ -2199,7 +2552,7 @@ function ObjectiveDocumentBody({
         <DocumentRelation
           label="Review｜审查"
           onThreadOpen={() => onThreadOpen("verify", "Review｜比较证据、实际结果与关键结果")}
-          value="比较证据、实际结果与关键结果；区分执行偏差、路线错误和因果假设错误。"
+          value={`由 Review Agent 比较证据、实际结果与关键结果，区分执行偏差、路线错误和因果假设错误；${getHumanDri(focused)} 作为 DRI 负责最终验收。`}
         />
         <DocumentRelation
           label="Decision｜决策"
@@ -2209,6 +2562,266 @@ function ObjectiveDocumentBody({
         />
       </DocumentSection>
     </div>
+  );
+}
+
+function ExecutionRunPanel({
+  focused,
+  onDecide,
+  onStart,
+  runs,
+}: {
+  focused: GoalNode;
+  onDecide: (runId: string, decision: "accepted" | "redo") => void;
+  onStart: (
+    action: string,
+    agent: string,
+    riskLevel: AgentRun["riskLevel"],
+  ) => void;
+  runs: AgentRun[];
+}) {
+  const agents = getExecutionAgents(focused);
+  const [action, setAction] = useState(
+    focused.actions?.[0] ?? `分析“${focused.title}”的当前状态并产出下一步可执行结果。`,
+  );
+  const [agent, setAgent] = useState(agents[0]);
+  const [riskLevel, setRiskLevel] = useState<AgentRun["riskLevel"]>("low");
+  const running = runs.some((run) => run.status === "running");
+
+  useEffect(() => {
+    setAction(
+      focused.actions?.[0] ??
+        `分析“${focused.title}”的当前状态并产出下一步可执行结果。`,
+    );
+    setAgent(getExecutionAgents(focused)[0]);
+    setRiskLevel("low");
+  }, [focused]);
+
+  const statusMeta: Record<
+    AgentRunStatus,
+    { label: string; tone: string }
+  > = {
+    running: { label: "运行中", tone: "bg-cyan-50 text-cyan-800" },
+    "review-required": {
+      label: "待 DRI 验收",
+      tone: "bg-amber-50 text-amber-800",
+    },
+    accepted: { label: "已接受", tone: "bg-emerald-50 text-emerald-700" },
+    redo: { label: "要求重做", tone: "bg-violet-50 text-violet-700" },
+    failed: { label: "运行失败", tone: "bg-rose-50 text-rose-700" },
+  };
+
+  return (
+    <section className="mt-5 border-y border-slate-200 bg-slate-50/70">
+      <div className="grid gap-3 p-4 lg:grid-cols-[minmax(0,1fr)_150px_112px_auto]">
+        <label className="min-w-0">
+          <span className="text-[9px] font-semibold uppercase text-slate-400">
+            Action｜授权执行的行动
+          </span>
+          <input
+            className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-xs text-slate-800 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+            onChange={(event) => setAction(event.target.value)}
+            value={action}
+          />
+        </label>
+        <label>
+          <span className="text-[9px] font-semibold uppercase text-slate-400">
+            Execution Agent
+          </span>
+          <select
+            className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-cyan-600"
+            onChange={(event) => setAgent(event.target.value)}
+            value={agent}
+          >
+            {agents.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          <span className="text-[9px] font-semibold uppercase text-slate-400">
+            风险等级
+          </span>
+          <select
+            className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-2 text-xs text-slate-700 outline-none focus:border-cyan-600"
+            onChange={(event) =>
+              setRiskLevel(event.target.value as AgentRun["riskLevel"])
+            }
+            value={riskLevel}
+          >
+            <option value="low">低风险</option>
+            <option value="medium">中风险</option>
+            <option value="high">高风险</option>
+          </select>
+        </label>
+        <button
+          className="mt-[22px] inline-flex h-10 items-center justify-center gap-1.5 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-cyan-800 disabled:cursor-wait disabled:opacity-50"
+          disabled={running || !action.trim()}
+          onClick={() => onStart(action.trim(), agent, riskLevel)}
+          type="button"
+        >
+          {running ? (
+            <Activity className="h-3.5 w-3.5 animate-pulse" />
+          ) : (
+            <Play className="h-3.5 w-3.5" />
+          )}
+          {running ? "运行中" : "DRI 授权并运行"}
+        </button>
+      </div>
+
+      <div className="border-t border-slate-200">
+        <div className="flex items-center justify-between px-4 py-3">
+          <div>
+            <h3 className="text-xs font-semibold text-slate-900">
+              Agent Runs｜执行记录
+            </h3>
+            <p className="mt-0.5 text-[10px] text-slate-500">
+              每次运行保留授权、结果、证据和 DRI 决策。
+            </p>
+          </div>
+          <span className="font-mono text-[10px] text-slate-400">
+            {runs.length} RUNS
+          </span>
+        </div>
+
+        {runs.length === 0 ? (
+          <div className="border-t border-dashed border-slate-200 px-4 py-5 text-center text-xs text-slate-400">
+            尚无运行记录。授权一个边界明确的 Action 开始执行。
+          </div>
+        ) : (
+          <div className="divide-y divide-slate-200 border-t border-slate-200">
+            {runs.map((run) => {
+              const meta = statusMeta[run.status];
+              return (
+                <article className="bg-white px-4 py-4" key={run.id}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`rounded px-2 py-1 text-[9px] font-semibold ${meta.tone}`}>
+                          {meta.label}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-600">
+                          {run.agent}
+                        </span>
+                        <span className="text-[9px] text-slate-400">
+                          {run.riskLevel === "low"
+                            ? "低风险"
+                            : run.riskLevel === "medium"
+                              ? "中风险"
+                              : "高风险"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-sm font-medium leading-6 text-slate-900">
+                        {run.action}
+                      </p>
+                      <p className="mt-1 text-[10px] text-slate-400">
+                        {run.approvedBy} 授权 ·{" "}
+                        {new Date(run.startedAt).toLocaleString("zh-CN")}
+                      </p>
+                    </div>
+                    {run.status === "review-required" ? (
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          className="inline-flex h-8 items-center gap-1 rounded border border-slate-300 bg-white px-2.5 text-[10px] font-semibold text-slate-700 hover:border-violet-400 hover:text-violet-700"
+                          onClick={() => onDecide(run.id, "redo")}
+                          type="button"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          要求重做
+                        </button>
+                        <button
+                          className="inline-flex h-8 items-center gap-1 rounded bg-emerald-700 px-2.5 text-[10px] font-semibold text-white hover:bg-emerald-800"
+                          onClick={() => onDecide(run.id, "accepted")}
+                          type="button"
+                        >
+                          <Check className="h-3 w-3" />
+                          接受结果
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {run.status === "running" ? (
+                    <p className="mt-3 flex items-center gap-2 text-xs text-cyan-700">
+                      <Activity className="h-3.5 w-3.5 animate-pulse" />
+                      Agent 正在读取 Objective、授权边界和当前文档……
+                    </p>
+                  ) : null}
+                  {run.error ? (
+                    <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-rose-700">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {run.error}
+                    </p>
+                  ) : null}
+                  {run.outcome ? (
+                    <div className="mt-4 border-l-2 border-cyan-600 pl-3">
+                      <p className="text-[9px] font-semibold uppercase text-slate-400">
+                        Outcome｜实际结果
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-slate-700">
+                        {run.outcome}
+                      </p>
+                    </div>
+                  ) : null}
+                  {run.evidence.length > 0 ? (
+                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                      {run.evidence.map((item, index) => (
+                        <div
+                          className="border-l border-slate-300 bg-slate-50 px-3 py-2"
+                          key={`${run.id}-${item.label}-${index}`}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <ShieldCheck className="h-3 w-3 text-emerald-700" />
+                            <p className="text-[9px] font-semibold text-slate-700">
+                              {item.label}
+                            </p>
+                            <span className="text-[8px] uppercase text-slate-400">
+                              {item.kind}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] leading-4 text-slate-600">
+                            {item.detail}
+                          </p>
+                          {item.source ? (
+                            <a
+                              className="mt-1 block truncate text-[9px] font-medium text-cyan-700 hover:underline"
+                              href={item.source}
+                              rel="noreferrer"
+                              target="_blank"
+                            >
+                              {item.source}
+                            </a>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {run.needsDecision && run.decisionQuestion ? (
+                    <p className="mt-3 flex items-start gap-2 border-l-2 border-amber-400 bg-amber-50 px-3 py-2 text-[10px] leading-4 text-amber-900">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      DRI 决策请求：{run.decisionQuestion}
+                    </p>
+                  ) : null}
+                  {run.decision ? (
+                    <p className="mt-3 flex items-start gap-2 text-[10px] leading-4 text-emerald-700">
+                      <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                      {run.decision}
+                    </p>
+                  ) : null}
+                  {run.provider ? (
+                    <p className="mt-3 truncate font-mono text-[8px] text-slate-400">
+                      {run.provider}
+                    </p>
+                  ) : null}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -2337,7 +2950,7 @@ function getObjectiveWorkFacts(goal: GoalNode): ObjectiveWorkFacts {
         : `形成“${goal.title}”的可执行方案，并明确范围、负责人和依赖。`),
     action:
       goal.actions?.join("；") ??
-      `${goal.owner} 完成当前优先事项，并持续回填状态、阻塞和产物。`,
+      `${getExecutionAgents(goal).join("、")} 在授权边界内完成当前优先事项，并持续回填状态、阻塞和产物。`,
     outcome:
       goal.outcome ??
       (goal.status === "原型已实现" || goal.status === "开发中"
@@ -2522,8 +3135,22 @@ function CollaborationThreadPanel({
           </span>
         </div>
         <p className="mt-2 text-[10px] leading-4 text-slate-400">
-          {meta.name} · {selectedMethod.summary}
+          {meta.name} 代表推理 Agent 提交分析与提案 · {selectedMethod.summary}
         </p>
+        <div className="mt-3 grid grid-cols-3 divide-x divide-slate-200 border-y border-slate-200 text-[9px]">
+          <div className="py-2 pr-2">
+            <p className="text-slate-400">DRI</p>
+            <p className="mt-0.5 truncate font-semibold text-slate-700">{getHumanDri(focused)}</p>
+          </div>
+          <div className="px-2 py-2">
+            <p className="text-slate-400">推理 Agent</p>
+            <p className="mt-0.5 truncate font-semibold text-cyan-800">{getReasoningAgent(focused)}</p>
+          </div>
+          <div className="py-2 pl-2">
+            <p className="text-slate-400">执行 Agent</p>
+            <p className="mt-0.5 truncate font-semibold text-violet-800">{getExecutionAgents(focused).join(" · ")}</p>
+          </div>
+        </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
@@ -2644,7 +3271,7 @@ function CollaborationThreadPanel({
                 type="button"
               >
                 <Check className="h-3.5 w-3.5" />
-                {confirmed ? "已写入文档" : "确认写入"}
+                {confirmed ? "DRI 已确认" : "由 DRI 确认写入"}
               </button>
             </div>
           </div>
@@ -2662,7 +3289,7 @@ function CollaborationThreadPanel({
           className="text-[10px] font-semibold text-slate-600"
           htmlFor={`agent-request-${focused.id}-${activeStage}`}
         >
-          继续共同推演
+          向推理 Agent 提出要求
         </label>
         <div className="mt-1.5 flex gap-2">
           <input
@@ -2675,7 +3302,7 @@ function CollaborationThreadPanel({
                 onAskAgent();
               }
             }}
-            placeholder={anchor ? "@AI 检查这条结论的依据……" : "@AI 继续推演这个问题……"}
+            placeholder={anchor ? "检查这条结论的依据与风险……" : "继续分析并提出下一步工作……"}
             value={agentRequest}
           />
           <button
@@ -2690,7 +3317,7 @@ function CollaborationThreadPanel({
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
           <span className="text-[9px] leading-4 text-slate-400">
-            AI 只能提交提案，确认后才写入正式文档。
+            Agent 在授权内执行；目标、越权例外与最终验收由 DRI 决策。
           </span>
           <button
             className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-slate-500 hover:text-slate-900 disabled:opacity-50"
@@ -2721,6 +3348,16 @@ function ThreadEntryItem({ entry }: { entry: ThreadEntry }) {
       label: "AI 分析",
       icon: Sparkles,
       tone: "bg-cyan-600",
+    },
+    "agent-run": {
+      label: "Agent Run",
+      icon: Play,
+      tone: "bg-slate-900",
+    },
+    evidence: {
+      label: "证据回填",
+      icon: ShieldCheck,
+      tone: "bg-emerald-600",
     },
     proposal: {
       label: "修改提案",
@@ -2839,7 +3476,11 @@ function getInitialDraft(goal: GoalNode, stage: CanvasStage): string {
       `当前问题：${goal.problem}`,
       `目标描述：${goal.objective}`,
       formatKeyResults(goal),
-      `范围边界：由 ${goal.owner} 负责，${parent ? `通过“${goal.relation}”支撑 ${parent.id} ${parent.title}` : "作为根目标统领所有下级工作"}`,
+      `Human DRI：${getHumanDri(goal)}，对目标和最终结果负责`,
+      `Reasoning Agent：${getReasoningAgent(goal)}，负责分析、拆解与提案`,
+      `Execution Agent：${getExecutionAgents(goal).join("、")}，在授权范围内执行并回填证据`,
+      `授权边界：${getAutonomyPolicy(goal)}`,
+      `范围关系：${parent ? `通过“${goal.relation}”支撑 ${parent.id} ${parent.title}` : "作为根目标统领所有下级工作"}`,
       "可实现依据：待补充",
       "时间周期：待补充",
     ].join("\n");
@@ -2873,6 +3514,8 @@ function getInitialDraft(goal: GoalNode, stage: CanvasStage): string {
       `必要条件的承担方式：\n${childObjectives}`,
       `Initiative｜举措：${workFacts.initiative}`,
       `Action｜行动：${workFacts.action}`,
+      `Reasoning Agent：${getReasoningAgent(goal)} 负责说明任务为什么产生`,
+      `Human DRI：${getHumanDri(goal)} 负责确认方向、授权与高风险取舍`,
       "路线检查：每条必要条件必须有明确承担方式；举措若需要独立 KR 或继续拆解，应升级为下级目标。",
     ].join("\n\n");
   }
@@ -2880,12 +3523,12 @@ function getInitialDraft(goal: GoalNode, stage: CanvasStage): string {
   if (stage === "execute") {
     const workFacts = getObjectiveWorkFacts(goal);
     return [
-      `执行主体：${goal.owner}`,
+      `Human DRI：${getHumanDri(goal)}`,
+      `Execution Agent：${getExecutionAgents(goal).join("、")}`,
       `当前状态：${goal.status}`,
       `Outcome｜实际结果：${workFacts.outcome}`,
       `Evidence｜证据：${workFacts.evidence}`,
-      "自动推进边界：已确认条件、预算和权限范围内。",
-      "升级规则：越权、不可逆、高影响或证据不足时暂停并交由人判断。",
+      `授权与升级边界：${getAutonomyPolicy(goal)}`,
     ].join("\n");
   }
 
@@ -2895,6 +3538,7 @@ function getInitialDraft(goal: GoalNode, stage: CanvasStage): string {
     formatKeyResults(goal),
     ...goal.keyResults.map((_, index) => `KR${index + 1} 证据：待补充`),
     "审查：逐项核验 KR，区分执行偏差、路线错误和必要条件错误。",
+    `审查分工：Review Agent 提供证据判断；Human DRI ${getHumanDri(goal)} 负责最终验收。`,
     `Decision｜决策：${workFacts.decision}`,
     "影响传播：必要时标出受影响的下级目标，并触发调整、重做或停止。",
   ].join("\n");
