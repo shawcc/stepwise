@@ -81,6 +81,8 @@ const actionPositions: Record<string, NodePosition> = {
   A5: { x: 960, y: 860, width: 200, height: 112 },
 };
 
+const activeRootStorageKey = "stepwise.active-root-goal";
+
 const relationLabels: Record<string, { x: number; y: number }> = {
   R7: { x: 582, y: 367 },
   R8: { x: 872, y: 367 },
@@ -170,11 +172,37 @@ function getGoalPath(
   return path;
 }
 
-function relationPath(relation: Relation): string {
-  const source =
-    goalPositions[relation.sourceId] ?? actionPositions[relation.sourceId];
-  const target =
-    goalPositions[relation.targetId] ?? actionPositions[relation.targetId];
+function getRootGoalId(
+  goalId: string,
+  goalRecords: Record<string, Goal>,
+): string | null {
+  const path = getGoalPath(goalId, goalRecords);
+  return path[0]?.level === 0 ? path[0].id : null;
+}
+
+function getProjectGoalIds(
+  rootGoalId: string,
+  goalRecords: Record<string, Goal>,
+): Set<string> {
+  const ids = new Set<string>();
+  const pending = [rootGoalId];
+  while (pending.length) {
+    const goalId = pending.shift()!;
+    if (ids.has(goalId) || !goalRecords[goalId]) continue;
+    ids.add(goalId);
+    getGoalChildren(goalId, goalRecords).forEach((goal) =>
+      pending.push(goal.id),
+    );
+  }
+  return ids;
+}
+
+function relationPath(
+  relation: Relation,
+  nodePositions: Record<string, NodePosition>,
+): string {
+  const source = nodePositions[relation.sourceId];
+  const target = nodePositions[relation.targetId];
   if (!source || !target) return "";
 
   if (relation.kind.includes("dependency")) {
@@ -217,7 +245,22 @@ export function StepwiseWorkspace() {
   const [decompositionReviews, setDecompositionReviews] = useState<
     DecompositionReview[]
   >(initialWorkspace.decompositionReviews);
+  const [activeRootGoalId, setActiveRootGoalId] = useState<string | null>(() => {
+    const storedRootId =
+      typeof window === "undefined"
+        ? null
+        : window.localStorage.getItem(activeRootStorageKey);
+    if (storedRootId && initialWorkspace.goals[storedRootId]?.level === 0) {
+      return storedRootId;
+    }
+    return (
+      Object.values(initialWorkspace.goals).find((goal) => goal.level === 0)
+        ?.id ?? null
+    );
+  });
   const [showCreateGoal, setShowCreateGoal] = useState(false);
+  const [focusedGoalId, setFocusedGoalId] = useState<string | null>(null);
+  const [workspaceNotice, setWorkspaceNotice] = useState<string | null>(null);
   const [workspaceSyncing, setWorkspaceSyncing] = useState(true);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
 
@@ -234,6 +277,16 @@ export function StepwiseWorkspace() {
       setActions(workspace.actions);
       setRelations(workspace.relations);
       setDecompositionReviews(workspace.decompositionReviews);
+      setActiveRootGoalId((current) => {
+        const next =
+          current && workspace.goals[current]?.level === 0
+            ? current
+            : (Object.values(workspace.goals).find((goal) => goal.level === 0)
+                ?.id ?? null);
+        if (next) window.localStorage.setItem(activeRootStorageKey, next);
+        else window.localStorage.removeItem(activeRootStorageKey);
+        return next;
+      });
       saveWorkspaceSnapshot(window.localStorage, {
         goals: workspace.goals,
         actions: workspace.actions,
@@ -274,6 +327,20 @@ export function StepwiseWorkspace() {
     };
   }, [applyWorkspaceSnapshot, initialWorkspace]);
 
+  useEffect(() => {
+    if (!workspaceNotice) return;
+    const timeout = window.setTimeout(() => setWorkspaceNotice(null), 5000);
+    return () => window.clearTimeout(timeout);
+  }, [workspaceNotice]);
+
+  useEffect(() => {
+    if (activeRootGoalId) {
+      window.localStorage.setItem(activeRootStorageKey, activeRootGoalId);
+    } else {
+      window.localStorage.removeItem(activeRootStorageKey);
+    }
+  }, [activeRootGoalId]);
+
   const commitWorkspace = useCallback(
     async (operation: () => Promise<ServerWorkspaceSnapshot>) => {
       setWorkspaceSyncing(true);
@@ -294,20 +361,38 @@ export function StepwiseWorkspace() {
     [applyWorkspaceSnapshot],
   );
 
-  const openGoal = (id: string) => setSelection({ type: "goal", id });
-  const openAction = (id: string) => setSelection({ type: "action", id });
+  const activateProject = (rootGoalId: string) => {
+    if (!goalRecords[rootGoalId] || goalRecords[rootGoalId].level !== 0) return;
+    setActiveRootGoalId(rootGoalId);
+    setFocusedGoalId(rootGoalId);
+    setSelection(null);
+    setSelectedDecompositionGoalId(null);
+    setSelectedRelationId(null);
+  };
+  const openGoal = (id: string) => {
+    const rootGoalId = getRootGoalId(id, goalRecords);
+    if (rootGoalId) setActiveRootGoalId(rootGoalId);
+    setFocusedGoalId(id);
+    setSelection({ type: "goal", id });
+  };
+  const openAction = (id: string) => {
+    const action = actions.find((item) => item.id === id);
+    const rootGoalId = action
+      ? getRootGoalId(action.goalId, goalRecords)
+      : null;
+    if (rootGoalId) setActiveRootGoalId(rootGoalId);
+    setSelection({ type: "action", id });
+  };
 
   return (
     <main className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-slate-300 bg-white shadow-sm sm:min-h-[760px]">
       <WorkspaceHeader
+        activeRootGoalId={activeRootGoalId}
         goalRecords={goalRecords}
         onCreateGoal={() => setShowCreateGoal(true)}
         onDocument={() => {
           if (!selection) {
-            const rootGoal = Object.values(goalRecords).find(
-              (goal) => goal.level === 0,
-            );
-            if (rootGoal) openGoal(rootGoal.id);
+            if (activeRootGoalId) openGoal(activeRootGoalId);
           }
         }}
         onMap={() => {
@@ -316,6 +401,7 @@ export function StepwiseWorkspace() {
           setSelectedRelationId(null);
         }}
         onRefresh={() => void commitWorkspace(fetchWorkspace)}
+        onSelectProject={activateProject}
         selection={selection}
         showActions={showActions}
         workspaceError={workspaceError}
@@ -324,6 +410,17 @@ export function StepwiseWorkspace() {
       />
 
       <div className="relative min-h-0 flex-1 overflow-hidden bg-slate-100">
+        {workspaceNotice ? (
+          <div
+            aria-live="polite"
+            className="absolute right-4 top-4 z-40 inline-flex items-center gap-2 rounded-md border border-emerald-300 bg-white px-3 py-2 text-xs font-semibold text-emerald-800 shadow-lg"
+            role="status"
+          >
+            <CheckCircle2 className="h-4 w-4" />
+            {workspaceNotice}
+          </div>
+        ) : null}
+
         {selection ? (
           selection.type === "goal" ? (
             <GoalDetail
@@ -363,7 +460,9 @@ export function StepwiseWorkspace() {
         ) : (
           <WorkMap
             actions={actions}
+            activeRootGoalId={activeRootGoalId}
             decompositionReviews={decompositionReviews}
+            focusedGoalId={focusedGoalId}
             goalRecords={goalRecords}
             onAction={openAction}
             onCreateGoal={() => setShowCreateGoal(true)}
@@ -434,7 +533,11 @@ export function StepwiseWorkspace() {
                 (goal) => !previousIds.has(goal.id),
               );
               setShowCreateGoal(false);
-              if (created) openGoal(created.id);
+              if (created) {
+                setActiveRootGoalId(created.id);
+                setWorkspaceNotice(`${created.id} 项目已创建`);
+                openGoal(created.id);
+              }
             }}
           />
         ) : null}
@@ -608,29 +711,45 @@ function CreateGoalDialog({
             />
           </label>
 
-          <label>
-            <span className="text-[10px] font-semibold text-slate-500">
-              约束
-            </span>
-            <textarea
-              className="mt-1.5 min-h-24 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
-              onChange={(event) => setConstraints(event.target.value)}
-              placeholder={"每行一条\n可留空"}
-              value={constraints}
-            />
-          </label>
+          <details className="sm:col-span-2 rounded-md border border-slate-200 bg-slate-50">
+            <summary className="cursor-pointer px-3 py-2.5 text-xs font-semibold text-slate-600">
+              更多设置
+            </summary>
+            <div className="grid gap-4 border-t border-slate-200 px-3 py-4 sm:grid-cols-2">
+              <label>
+                <span className="text-[10px] font-semibold text-slate-500">
+                  约束（可选）
+                </span>
+                <textarea
+                  className="mt-1.5 min-h-24 w-full resize-y rounded-md border border-slate-300 bg-white px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+                  onChange={(event) => setConstraints(event.target.value)}
+                  placeholder={"例如：不产生外部费用\n不修改生产数据"}
+                  value={constraints}
+                />
+              </label>
 
-          <label className="sm:col-span-2">
-            <span className="text-[10px] font-semibold text-slate-500">
-              Agent 授权边界
-            </span>
-            <textarea
-              className="mt-1.5 min-h-16 w-full resize-y rounded-md border border-slate-300 px-3 py-2 text-xs leading-5 outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
-              maxLength={1000}
-              onChange={(event) => setAutonomy(event.target.value)}
-              value={autonomy}
-            />
-          </label>
+              <label>
+                <span className="text-[10px] font-semibold text-slate-500">
+                  Agent 权限
+                </span>
+                <select
+                  className="mt-1.5 h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-xs outline-none focus:border-cyan-600 focus:ring-2 focus:ring-cyan-100"
+                  onChange={(event) => setAutonomy(event.target.value)}
+                  value={autonomy}
+                >
+                  <option value="Agent 可推进可逆工作；范围、高风险操作和最终验收由 Human DRI 决策。">
+                    标准｜推进可逆工作
+                  </option>
+                  <option value="Agent 仅提出方案，不执行任何操作；所有 Action 均由 Human DRI 确认。">
+                    仅建议｜不执行
+                  </option>
+                  <option value="Agent 可在明确约束内自主推进并记录证据；范围变更、高风险操作和最终验收由 Human DRI 决策。">
+                    高自主｜约束内推进
+                  </option>
+                </select>
+              </label>
+            </div>
+          </details>
 
           {error ? (
             <p
@@ -670,28 +789,35 @@ function CreateGoalDialog({
 }
 
 function WorkspaceHeader({
+  activeRootGoalId,
   goalRecords,
   onCreateGoal,
   onDocument,
   onMap,
   onRefresh,
+  onSelectProject,
   onToggleActions,
   selection,
   showActions,
   workspaceError,
   workspaceSyncing,
 }: {
+  activeRootGoalId: string | null;
   goalRecords: Record<string, Goal>;
   onCreateGoal: () => void;
   onDocument: () => void;
   onMap: () => void;
   onRefresh: () => void;
+  onSelectProject: (rootGoalId: string) => void;
   onToggleActions: () => void;
   selection: Selection | null;
   showActions: boolean;
   workspaceError: string | null;
   workspaceSyncing: boolean;
 }) {
+  const rootGoals = Object.values(goalRecords).filter(
+    (goal) => goal.level === 0,
+  );
   const selectedLabel = selection
     ? selection.type === "goal"
       ? goalRecords[selection.id]?.title
@@ -700,20 +826,43 @@ function WorkspaceHeader({
 
   return (
     <header className="border-b border-slate-200 bg-white px-4 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-slate-950 text-cyan-300">
             <Network className="h-4 w-4" />
           </span>
-          <span className="truncate text-sm font-semibold text-slate-950">
-            {selectedLabel ?? "工作图谱"}
-          </span>
+          <label className="min-w-0 flex-1">
+            <span className="sr-only">当前项目</span>
+            <select
+              aria-label="切换项目"
+              className="h-9 w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-950 outline-none focus:border-cyan-600 lg:max-w-[420px]"
+              onChange={(event) => onSelectProject(event.target.value)}
+              value={activeRootGoalId ?? ""}
+            >
+              {rootGoals.length === 0 ? (
+                <option value="">暂无项目</option>
+              ) : null}
+              {rootGoals.map((goal) => (
+                <option key={goal.id} value={goal.id}>
+                  {goal.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedLabel &&
+          selection?.type === "goal" &&
+          selection.id !== activeRootGoalId ? (
+            <span className="hidden min-w-0 truncate text-xs text-slate-500 lg:block">
+              / {selectedLabel}
+            </span>
+          ) : null}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             className="inline-flex h-9 items-center gap-2 rounded-md bg-slate-950 px-3 text-xs font-semibold text-white hover:bg-cyan-800"
             onClick={onCreateGoal}
+            title="新建独立项目 Goal"
             type="button"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -769,6 +918,7 @@ function WorkspaceHeader({
           </div>
           {!selection ? (
             <button
+              aria-label={showActions ? "隐藏 Action" : "显示 Action"}
               aria-pressed={showActions}
               className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-semibold ${
                 showActions
@@ -779,7 +929,10 @@ function WorkspaceHeader({
               type="button"
             >
               <Activity className="h-3.5 w-3.5" />
-              {showActions ? "隐藏 Action" : "显示 Action"}
+              <span className="sm:hidden">Action</span>
+              <span className="hidden sm:inline">
+                {showActions ? "隐藏 Action" : "显示 Action"}
+              </span>
             </button>
           ) : null}
         </div>
@@ -790,7 +943,9 @@ function WorkspaceHeader({
 
 function WorkMap({
   actions,
+  activeRootGoalId,
   decompositionReviews,
+  focusedGoalId,
   goalRecords,
   onAction,
   onCreateGoal,
@@ -801,7 +956,9 @@ function WorkMap({
   showActions,
 }: {
   actions: Action[];
+  activeRootGoalId: string | null;
   decompositionReviews: DecompositionReview[];
+  focusedGoalId: string | null;
   goalRecords: Record<string, Goal>;
   onAction: (id: string) => void;
   onCreateGoal: () => void;
@@ -811,70 +968,131 @@ function WorkMap({
   relations: Relation[];
   showActions: boolean;
 }) {
-  const visibleRelations = relations.filter(
-    (relation) =>
-      showActions ||
-      (goalRecords[relation.sourceId] && goalRecords[relation.targetId]),
+  const mapViewportRef = useRef<HTMLDivElement>(null);
+  const projectGoalIds = activeRootGoalId
+    ? getProjectGoalIds(activeRootGoalId, goalRecords)
+    : new Set<string>();
+  const visibleGoals = Object.values(goalRecords)
+    .filter((goal) => projectGoalIds.has(goal.id))
+    .sort((left, right) => left.level - right.level || left.id.localeCompare(right.id));
+  const visibleActions = actions.filter((action) =>
+    projectGoalIds.has(action.goalId),
   );
-  const dynamicActionIds = actions
-    .filter((action) => !actionPositions[action.id])
-    .map((action) => action.id);
-  const dynamicActionCount = dynamicActionIds.length;
-  const dynamicActionRows = Math.ceil(dynamicActionCount / 5);
-  const dynamicGoals = Object.values(goalRecords).filter(
-    (goal) => !goalPositions[goal.id],
+  const levelGroups = new globalThis.Map<number, Goal[]>();
+  visibleGoals.forEach((goal) => {
+    const level = goal.level;
+    levelGroups.set(level, [...(levelGroups.get(level) ?? []), goal]);
+  });
+  const levels = [...levelGroups.keys()].sort((left, right) => left - right);
+  const maxGoalCount = Math.max(
+    1,
+    ...[...levelGroups.values()].map((goalsAtLevel) => goalsAtLevel.length),
   );
-  const dynamicGoalStartY = showActions
-    ? 1040 + dynamicActionRows * 140
-    : 758;
-  const dynamicGoalPositions = Object.fromEntries(
-    dynamicGoals.map((goal, index) => [
-      goal.id,
-      {
-        x: 40 + (index % 3) * 380,
-        y: dynamicGoalStartY + 48 + Math.floor(index / 3) * 180,
-        width: 340,
-        height: 148,
-      },
+  const actionColumns = Math.min(Math.max(visibleActions.length, 1), 5);
+  const canvasWidth = Math.max(
+    1200,
+    80 + maxGoalCount * 290,
+    80 + actionColumns * 230,
+  );
+  const useDemoLayout = activeRootGoalId === "G0";
+  const computedGoalPositions = Object.fromEntries(
+    visibleGoals.map((goal) => {
+      if (useDemoLayout && goalPositions[goal.id]) {
+        return [goal.id, goalPositions[goal.id]];
+      }
+      const goalsAtLevel = levelGroups.get(goal.level) ?? [];
+      const width = goal.level === 0 ? 340 : 250;
+      const gap = 40;
+      const rowWidth = goalsAtLevel.length * width + (goalsAtLevel.length - 1) * gap;
+      const index = goalsAtLevel.findIndex((item) => item.id === goal.id);
+      const relativeLevel = levels.indexOf(goal.level);
+      return [
+        goal.id,
+        {
+          x: (canvasWidth - rowWidth) / 2 + index * (width + gap),
+          y: 44 + relativeLevel * 274,
+          width,
+          height: goal.level === 0 ? 148 : 158,
+        },
+      ];
+    }),
+  ) as Record<string, NodePosition>;
+  const deepestGoalBottom = Math.max(
+    192,
+    ...Object.values(computedGoalPositions).map(
+      (position) => position.y + position.height,
+    ),
+  );
+  const actionStartY = useDemoLayout ? 860 : deepestGoalBottom + 138;
+  const computedActionPositions = Object.fromEntries(
+    visibleActions.map((action, index) => [
+      action.id,
+      useDemoLayout && actionPositions[action.id]
+        ? actionPositions[action.id]
+        : {
+            x: 40 + (index % 5) * 230,
+            y: actionStartY + Math.floor(index / 5) * 140,
+            width: 200,
+            height: 112,
+          },
     ]),
   ) as Record<string, NodePosition>;
-  const dynamicGoalRows = Math.ceil(dynamicGoals.length / 3);
-  const baseCanvasHeight = showActions
-    ? 1040 + dynamicActionRows * 140
-    : 760;
-  const canvasHeight = dynamicGoals.length
-    ? dynamicGoalStartY + 48 + dynamicGoalRows * 180 + 24
-    : baseCanvasHeight;
-  const submissionReview = decompositionReviews.find(
-    (review) => review.goalId === "G4",
+  const nodePositions = {
+    ...computedGoalPositions,
+    ...(showActions ? computedActionPositions : {}),
+  };
+  const visibleNodeIds = new Set(Object.keys(nodePositions));
+  const visibleRelations = relations.filter(
+    (relation) =>
+      visibleNodeIds.has(relation.sourceId) &&
+      visibleNodeIds.has(relation.targetId),
   );
-  const mapViewportRef = useRef<HTMLDivElement>(null);
+  const actionRows = Math.ceil(visibleActions.length / 5);
+  const canvasHeight = showActions && visibleActions.length
+    ? actionStartY + actionRows * 140 + 24
+    : deepestGoalBottom + 80;
+  const visibleReviews = decompositionReviews.filter((review) =>
+    projectGoalIds.has(review.goalId),
+  );
+  const focusPosition = focusedGoalId
+    ? computedGoalPositions[focusedGoalId]
+    : activeRootGoalId
+      ? computedGoalPositions[activeRootGoalId]
+      : null;
+  const focusCenterX = focusPosition
+    ? focusPosition.x + focusPosition.width / 2
+    : null;
+  const focusCenterY = focusPosition
+    ? focusPosition.y + focusPosition.height / 2
+    : null;
 
   useEffect(() => {
     let frame = 0;
-    const centerRootGoal = () => {
+    const centerGoal = () => {
       window.cancelAnimationFrame(frame);
       frame = window.requestAnimationFrame(() => {
         const viewport = mapViewportRef.current;
-        if (!viewport || viewport.scrollWidth <= viewport.clientWidth) return;
+        if (!viewport || focusCenterX === null || focusCenterY === null) return;
         viewport.scrollLeft = Math.max(
           0,
-          (goalPositions.G0?.x ?? 430) +
-            (goalPositions.G0?.width ?? 340) / 2 -
-            viewport.clientWidth / 2,
+          focusCenterX - viewport.clientWidth / 2,
+        );
+        viewport.scrollTop = Math.max(
+          0,
+          focusCenterY - viewport.clientHeight / 2,
         );
       });
     };
-    centerRootGoal();
+    centerGoal();
     const observer = new ResizeObserver(() => {
-      centerRootGoal();
+      centerGoal();
     });
     if (mapViewportRef.current) observer.observe(mapViewportRef.current);
     return () => {
       observer.disconnect();
       window.cancelAnimationFrame(frame);
     };
-  }, [showActions]);
+  }, [focusCenterX, focusCenterY, showActions]);
 
   return (
     <section className="flex h-full min-h-0 flex-col">
@@ -882,7 +1100,7 @@ function WorkMap({
         <MapLegend showActions={showActions} />
       </header>
 
-      {Object.keys(goalRecords).length === 0 ? (
+      {!activeRootGoalId || visibleGoals.length === 0 ? (
         <div className="grid min-h-0 flex-1 place-items-center bg-white px-6 text-center">
           <div className="max-w-sm">
             <span className="mx-auto grid h-12 w-12 place-items-center rounded-md border border-cyan-300 bg-cyan-50 text-cyan-800">
@@ -910,29 +1128,35 @@ function WorkMap({
         ref={mapViewportRef}
       >
         <div
-          className="relative mx-auto w-[1200px] overflow-hidden rounded-md border border-slate-300 bg-white"
-          style={{ height: canvasHeight }}
+          className="relative mx-auto overflow-hidden rounded-md border border-slate-300 bg-white"
+          style={{ height: canvasHeight, width: canvasWidth }}
         >
-          <div className="absolute inset-x-0 top-0 h-[224px] border-b border-slate-200 bg-white" />
-          <div className="absolute inset-x-0 top-[224px] h-[282px] border-b border-slate-200 bg-slate-50/80" />
-          <div className="absolute inset-x-0 top-[506px] h-[252px] border-b border-slate-200 bg-white" />
-          {showActions ? (
-            <div className="absolute inset-x-0 top-[758px] h-[282px] bg-slate-50/80" />
-          ) : null}
-          {dynamicGoals.length ? (
+          {levels.map((level, index) => {
+            const goalsAtLevel = levelGroups.get(level) ?? [];
+            const y = Math.min(
+              ...goalsAtLevel.map((goal) => computedGoalPositions[goal.id].y),
+            );
+            return (
+              <div
+                className={`absolute inset-x-0 border-b border-slate-200 ${
+                  index % 2 ? "bg-slate-50/80" : "bg-white"
+                }`}
+                key={level}
+                style={{ height: 274, top: Math.max(0, y - 44) }}
+              />
+            );
+          })}
+          {showActions && visibleActions.length ? (
             <div
-              className="absolute inset-x-0 border-t border-slate-200 bg-white"
-              style={{
-                height: canvasHeight - dynamicGoalStartY,
-                top: dynamicGoalStartY,
-              }}
+              className="absolute inset-x-0 border-t border-slate-200 bg-slate-50/80"
+              style={{ bottom: 0, top: actionStartY - 58 }}
             />
           ) : null}
 
           <svg
             aria-hidden="true"
             className="absolute inset-0 h-full w-full"
-            viewBox={`0 0 1200 ${canvasHeight}`}
+            viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}
           >
             <defs>
               <marker
@@ -999,7 +1223,7 @@ function WorkMap({
                   className={`${relationMeta[relation.kind].line} ${
                     dependency ? "stroke-dasharray-[7_6]" : ""
                   }`}
-                  d={relationPath(relation)}
+                  d={relationPath(relation, nodePositions)}
                   fill="none"
                   key={relation.id}
                   markerEnd={marker}
@@ -1009,85 +1233,95 @@ function WorkMap({
             })}
           </svg>
 
-          <MapLane label="L0" y={38} />
-          <MapLane label="L1" y={246} />
-          <MapLane label="L2" y={528} />
-          {showActions ? (
-            <MapLane label="ACTION" y={782} />
+          {levels.map((level) => {
+            const firstGoal = levelGroups.get(level)?.[0];
+            return firstGoal ? (
+              <MapLane
+                key={level}
+                label={`L${level - (goalRecords[activeRootGoalId]?.level ?? 0)}`}
+                y={computedGoalPositions[firstGoal.id].y - 6}
+              />
+            ) : null;
+          })}
+          {showActions && visibleActions.length ? (
+            <MapLane label="ACTION" y={actionStartY - 34} />
           ) : null}
-          {dynamicGoals.length ? (
-            <MapLane label="NEW GOALS" y={dynamicGoalStartY + 18} />
-          ) : null}
 
-          <button
-            className="absolute left-1/2 top-[210px] z-30 flex -translate-x-1/2 items-center gap-2 rounded-md border border-cyan-300 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-900 shadow-sm hover:border-cyan-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
-            onClick={() => onDecomposition("G0")}
-            type="button"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            WISESTEP
-          </button>
+          {visibleReviews.map((review) => {
+            const goalPosition = computedGoalPositions[review.goalId];
+            if (!goalPosition) return null;
+            return (
+              <button
+                aria-label={`查看 ${goalRecords[review.goalId].title} 的 WISESTEP 拆解讨论`}
+                className={`absolute z-30 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-md border shadow-sm transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 ${
+                  review.status === "confirmed"
+                    ? "border-cyan-300 bg-white hover:border-cyan-600 focus-visible:outline-cyan-600"
+                    : "border-amber-300 bg-amber-50 hover:border-amber-600 focus-visible:outline-amber-600"
+                }`}
+                key={review.id}
+                onClick={() => onDecomposition(review.goalId)}
+                style={{
+                  left: goalPosition.x + goalPosition.width / 2,
+                  top: goalPosition.y + goalPosition.height - 18,
+                }}
+                title="查看 WISESTEP 拆解讨论"
+                type="button"
+              >
+                <WiseStepMark pending={review.status === "proposed"} />
+              </button>
+            );
+          })}
 
-          <button
-            className="absolute left-[475px] top-[526px] z-30 flex items-center gap-2 rounded-md border border-cyan-300 bg-white px-3 py-2 text-[10px] font-semibold text-cyan-900 shadow-sm hover:border-cyan-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600"
-            onClick={() => onDecomposition("G2")}
-            type="button"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            WISESTEP
-          </button>
-
-          <button
-            className="absolute left-[935px] top-[526px] z-30 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-[10px] font-semibold text-amber-950 shadow-sm hover:border-amber-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
-            onClick={() => onDecomposition("G4")}
-            type="button"
-          >
-            {submissionReview?.status === "confirmed" ? (
-              <CheckCircle2 className="h-3.5 w-3.5" />
-            ) : (
-              <Bot className="h-3.5 w-3.5" />
-            )}
-            {submissionReview?.status === "confirmed"
-              ? "WISESTEP"
-              : "WISESTEP · 待确认"}
-          </button>
-
-          {Object.values(goalRecords).map((goal) => (
+          {visibleGoals.map((goal) => (
             <GoalMapNode
               goal={goal}
               goalRecords={goalRecords}
+              focused={focusedGoalId === goal.id}
               key={goal.id}
               onClick={() => onGoal(goal.id)}
-              position={
-                goalPositions[goal.id] ?? dynamicGoalPositions[goal.id]
-              }
+              position={computedGoalPositions[goal.id]}
             />
           ))}
 
           {showActions
-            ? actions.map((action) => {
-                const dynamicIndex = dynamicActionIds.indexOf(action.id);
-                return (
+            ? visibleActions.map((action) => (
                 <ActionMapNode
                   action={action}
                   key={action.id}
                   onClick={() => onAction(action.id)}
-                  position={
-                    actionPositions[action.id] ?? {
-                      x: 40 + (dynamicIndex % 5) * 230,
-                      y: 1000 + Math.floor(dynamicIndex / 5) * 140,
-                      width: 200,
-                      height: 112,
-                    }
-                  }
+                  position={computedActionPositions[action.id]}
                 />
-                );
-              })
+              ))
             : null}
 
           {visibleRelations.map((relation) => {
-            const position = relationLabels[relation.id];
-            if (!position) return null;
+            if (relation.kind === "decomposes") return null;
+            const source = nodePositions[relation.sourceId];
+            const target = nodePositions[relation.targetId];
+            const position =
+              useDemoLayout && relationLabels[relation.id]
+                ? relationLabels[relation.id]
+                : relation.kind.includes("dependency")
+                  ? {
+                      x: (source.x + source.width + target.x) / 2 - 28,
+                      y:
+                        (source.y +
+                          source.height / 2 +
+                          target.y +
+                          target.height / 2) /
+                          2 -
+                        12,
+                    }
+                  : {
+                      x:
+                        (source.x +
+                          source.width / 2 +
+                          target.x +
+                          target.width / 2) /
+                          2 -
+                        28,
+                      y: (source.y + source.height + target.y) / 2 - 12,
+                    };
             return (
               <button
                 aria-label={`${relation.sourceId} 到 ${relation.targetId}：${relation.label}`}
@@ -1106,6 +1340,37 @@ function WorkMap({
       </div>
       )}
     </section>
+  );
+}
+
+function WiseStepMark({ pending = false }: { pending?: boolean }) {
+  return (
+    <span className="relative grid h-7 w-7 place-items-center rounded bg-slate-950">
+      <svg
+        aria-hidden="true"
+        className="h-[19px] w-[19px]"
+        fill="none"
+        viewBox="0 0 24 24"
+      >
+        <circle cx="5.5" cy="5.5" fill="#fff" r="2" />
+        <circle cx="18.5" cy="5.5" fill="#fff" r="2" />
+        <path
+          d="M5.5 8v2.25H12m6.5-2.25v2.25H12v2.4"
+          stroke="#67e8f9"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="1.75"
+        />
+        <path
+          d="m12 12.25 3.25 3.25L12 18.75 8.75 15.5 12 12.25Z"
+          fill="#67e8f9"
+        />
+        <circle cx="12" cy="15.5" fill="#0f172a" r="1.15" />
+      </svg>
+      {pending ? (
+        <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-amber-50 bg-amber-500" />
+      ) : null}
+    </span>
   );
 }
 
@@ -1144,11 +1409,13 @@ function MapLegend({ showActions }: { showActions: boolean }) {
 }
 
 function GoalMapNode({
+  focused,
   goal,
   goalRecords,
   onClick,
   position,
 }: {
+  focused: boolean;
   goal: Goal;
   goalRecords: Record<string, Goal>;
   onClick: () => void;
@@ -1159,7 +1426,9 @@ function GoalMapNode({
   return (
     <button
       className={`absolute z-10 overflow-hidden rounded-md border bg-white text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-600 ${
-        root
+        focused
+          ? "border-cyan-700 shadow-[0_0_0_4px_rgba(8,145,178,.18)]"
+          : root
           ? "border-cyan-600 shadow-[0_0_0_3px_rgba(8,145,178,.10)]"
           : "border-slate-300 hover:border-slate-500 hover:shadow-sm"
       }`}
@@ -1279,7 +1548,8 @@ function GoalDetail({
   const goalActions = actions.filter((action) => action.goalId === goal.id);
   const connected = relations.filter(
     (relation) =>
-      relation.sourceId === goal.id || relation.targetId === goal.id,
+      relation.kind !== "decomposes" &&
+      (relation.sourceId === goal.id || relation.targetId === goal.id),
   );
   const isComposite = children.length > 0;
   const hasDecompositionReview = decompositionReviews.some(
@@ -2099,6 +2369,10 @@ function DecompositionPanel({
 }) {
   const [message, setMessage] = useState("");
   const parent = goalRecords[review.goalId];
+  const decompositionCount =
+    review.status === "proposed"
+      ? review.proposedGoals.length
+      : review.childGoalIds.length;
 
   const submitMessage = async () => {
     if (!message.trim()) return;
@@ -2123,8 +2397,9 @@ function DecompositionPanel({
       <header className="flex items-start justify-between gap-4 border-b border-slate-200 px-5 py-4">
         <div>
           <div className="flex items-center gap-2">
-            <span className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-[9px] font-semibold text-cyan-800">
-              拆解方案
+            <WiseStepMark pending={review.status === "proposed"} />
+            <span className="text-[10px] font-semibold tracking-[0.12em] text-cyan-800">
+              WISESTEP
             </span>
             <span className="font-mono text-[9px] text-slate-400">
               {review.id}
@@ -2158,9 +2433,18 @@ function DecompositionPanel({
           </span>
         </button>
 
+        <div className="mt-3 flex items-center gap-3 border-l-2 border-cyan-600 bg-cyan-50/60 px-3 py-2.5">
+          <span className="font-mono text-[10px] font-bold text-cyan-800">
+            1 → {decompositionCount}
+          </span>
+          <p className="text-xs leading-5 text-slate-700">
+            从这个上级 Goal 拆成 {decompositionCount} 个职责清晰、可分别验收的下级 Goal。
+          </p>
+        </div>
+
         <section className="mt-6">
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            拆解逻辑
+            从上级到下级
           </h3>
           <p className="mt-2 text-sm leading-6 text-slate-700">
             {review.logic}
@@ -2169,7 +2453,7 @@ function DecompositionPanel({
 
         <section className="mt-6">
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            为什么这组拆解是完整的
+            为什么拆成这 {decompositionCount} 个
           </h3>
           <p className="mt-2 text-sm leading-6 text-slate-700">
             {review.completeness}
@@ -2178,48 +2462,61 @@ function DecompositionPanel({
 
         <section className="mt-6">
           <h3 className="text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-            {review.status === "proposed" ? "提议的新 Goal" : "当前包含的 Goal"}
+            每个下级 Goal 负责什么
           </h3>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div className="mt-2 grid gap-2">
             {review.status === "proposed"
-              ? review.proposedGoals.map((proposal) => (
+              ? review.proposedGoals.map((proposal, index) => (
                   <div
-                    className="rounded-md border border-amber-300 bg-amber-50/60 p-3"
+                    className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-md border border-amber-300 bg-amber-50/60 p-3"
                     key={proposal.proposedId}
                   >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-[9px] font-bold text-amber-800">
-                        {proposal.proposedId} · PROPOSED
+                    <span className="grid h-8 w-8 place-items-center rounded bg-amber-100 font-mono text-[10px] font-bold text-amber-800">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[9px] font-bold text-amber-800">
+                          {proposal.proposedId} · PROPOSED
+                        </span>
+                        <Bot className="h-3.5 w-3.5 text-amber-700" />
+                      </div>
+                      <span className="mt-1 block text-xs font-semibold text-slate-900">
+                        {proposal.title}
                       </span>
-                      <Bot className="h-3.5 w-3.5 text-amber-700" />
+                      <span className="mt-1 block text-xs leading-5 text-slate-600">
+                        {proposal.intent}
+                      </span>
+                      <span className="mt-2 block text-[10px] leading-4 text-slate-500">
+                        DRI · {actorLabel(proposal.dri)} · Deadline{" "}
+                        {formatDate(
+                          proposal.timebox.dueAt,
+                          proposal.timebox.timezone,
+                        )}
+                      </span>
                     </div>
-                    <span className="mt-1 block text-xs font-semibold text-slate-900">
-                      {proposal.title}
-                    </span>
-                    <span className="mt-2 block text-[10px] leading-4 text-slate-600">
-                      DRI · {actorLabel(proposal.dri)}
-                    </span>
-                    <span className="mt-0.5 block text-[10px] leading-4 text-slate-600">
-                      Deadline ·{" "}
-                      {formatDate(
-                        proposal.timebox.dueAt,
-                        proposal.timebox.timezone,
-                      )}
-                    </span>
                   </div>
                 ))
-              : review.childGoalIds.map((goalId) => (
+              : review.childGoalIds.map((goalId, index) => (
                   <button
-                    className="rounded-md border border-slate-200 bg-white p-3 text-left hover:border-cyan-500"
+                    className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 rounded-md border border-slate-200 bg-white p-3 text-left hover:border-cyan-500"
                     key={goalId}
                     onClick={() => onGoal(goalId)}
                     type="button"
                   >
-                    <span className="font-mono text-[9px] font-bold text-cyan-700">
-                      {goalId}
+                    <span className="grid h-8 w-8 place-items-center rounded bg-cyan-50 font-mono text-[10px] font-bold text-cyan-800">
+                      {String(index + 1).padStart(2, "0")}
                     </span>
-                    <span className="mt-1 line-clamp-2 block text-xs font-semibold text-slate-800">
-                      {goalRecords[goalId].title}
+                    <span className="min-w-0">
+                      <span className="font-mono text-[9px] font-bold text-cyan-700">
+                        {goalId}
+                      </span>
+                      <span className="mt-1 block text-xs font-semibold text-slate-900">
+                        {goalRecords[goalId].title}
+                      </span>
+                      <span className="mt-1 block text-xs leading-5 text-slate-600">
+                        {goalRecords[goalId].intent}
+                      </span>
                     </span>
                   </button>
                 ))}
