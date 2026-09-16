@@ -46,13 +46,28 @@ async function main(): Promise<void> {
   );
   const address = httpServer.address();
   assert(address && typeof address === "object");
+  const endpoint = `http://127.0.0.1:${address.port}/api/mcp`;
+  const preflight = await fetch(endpoint, {
+    method: "OPTIONS",
+    headers: {
+      Origin: "http://127.0.0.1",
+      "Access-Control-Request-Method": "POST",
+      "Access-Control-Request-Headers":
+        "authorization, content-type, mcp-protocol-version",
+    },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(
+    preflight.headers.get("access-control-allow-origin"),
+    "http://127.0.0.1",
+  );
 
   const client = new Client({
     name: "stepwise-mcp-smoke-client",
     version: "1.0.0",
   });
   const transport = new StreamableHTTPClientTransport(
-    new URL(`http://127.0.0.1:${address.port}/api/mcp`),
+    new URL(endpoint),
   );
 
   try {
@@ -275,6 +290,7 @@ async function main(): Promise<void> {
         webApiWriteVisibleToMcp: true,
         mcpWriteVisibleToWebApi: true,
         lateLocalImportIgnored: true,
+        corsPreflight: true,
         finalActionStatus: decidedAction.status,
       }),
     );

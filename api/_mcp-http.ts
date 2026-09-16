@@ -65,8 +65,26 @@ export async function handleMcpRequest(
     return;
   }
 
+  const origin = request.headers.origin;
+  if (origin) {
+    response.setHeader("Access-Control-Allow-Origin", origin);
+    response.setHeader("Vary", "Origin");
+  }
+
+  if (request.method === "OPTIONS") {
+    response.statusCode = 204;
+    response.setHeader("Allow", "POST, OPTIONS");
+    response.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+    response.setHeader(
+      "Access-Control-Allow-Headers",
+      "Authorization, Content-Type, MCP-Protocol-Version",
+    );
+    response.end();
+    return;
+  }
+
   if (request.method !== "POST") {
-    response.setHeader("Allow", "POST");
+    response.setHeader("Allow", "POST, OPTIONS");
     sendJson(response, 405, {
       jsonrpc: "2.0",
       error: {
